@@ -17,8 +17,15 @@ sequenceDiagram
     participant Consumer as Consumer Connector<br/>did:web:party-b-connector%3A3000
     participant Wallet as Consumer Wallet<br/>(SSI / OpenID4VP)
     participant Provider as Provider Connector<br/>did:web:party-a-connector%3A3000
+    actor ProviderOp as Provider Operator<br/>(data owner / admin)
 
     Note over Consumer,Provider: All DSP messages use context https://w3id.org/dspace/2025/1/context.jsonld<br/>on base path /api/2025/1. Negotiation & Transfer are asynchronous:<br/>the receiver ACKs immediately, then pushes state changes to callbackAddress.
+
+    rect rgb(234, 250, 241)
+    Note over Provider,ProviderOp: SETUP — Provider publishes a dataset (asset)
+    ProviderOp->>Provider: Create dataset descriptor file data/datasets/&lt;id&gt;.json
+    Note over Provider: LocalDataset { dataset: { @id, hasPolicy (Offer), distribution (format) },<br/>remoteAddress: real backend URL — hidden from consumers }.<br/>No create-catalog call: the catalog is assembled per request from these files.
+    end
 
     rect rgb(235, 245, 251)
     Note over Consumer,Provider: STEP 0 — Catalog discovery (optional)

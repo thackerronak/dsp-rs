@@ -10,6 +10,7 @@ actor "Data Consumer\n(internal API caller)" as User
 participant "Consumer Connector\n(did:web:party-b-connector%3A3000)\nhttp://party-b-connector:3000" as Consumer
 participant "Consumer Wallet\n(SSI / OpenID4VP)" as Wallet
 participant "Provider Connector\n(did:web:party-a-connector%3A3000)\nhttp://party-a-connector:3000" as Provider
+actor "Provider Operator\n(data owner / admin)" as ProviderOp
 
 note over Consumer, Provider #EBF5FB
   All DSP messages are exchanged under the JSON-LD context
@@ -18,6 +19,34 @@ note over Consumer, Provider #EBF5FB
   Negotiation and Transfer are **asynchronous**: the receiver
   ACKs immediately (201/200) and later pushes state changes to
   the sender's **callbackAddress**.
+end note
+
+== SETUP (Provider): Dataset / Asset Publication ==
+
+ProviderOp -> Provider: Create dataset descriptor file\n(data/datasets/<id>.json)
+note right #EAFAF1
+  **LocalDataset** (source of truth on disk)
+  {
+    "dataset": {
+      "@id": "urn:uuid:3afeadd8-...-8394a8836d57",
+      "@type": "Dataset",
+      "hasPolicy": [{ "@type": "Offer", "@id": "urn:uuid:2828282:...a88",
+        "permission": [{ "action": "use",
+          "constraint": [{ "leftOperand": "spatial",
+                           "operator": "isPartOf",
+                           "rightOperand": "_:EU" }] }] }],
+      "distribution": [{ "@type": "Distribution", "format": "HttpData-PULL" }]
+    },
+    "remoteAddress": {            // the REAL backend — hidden from consumers
+      "url": "http://localhost:4000/api", "passHeaders": true
+    }
+  }
+end note
+note over Provider #FEF9E7
+  No "create catalog" call: the catalog is **assembled per request**
+  from every file in data/datasets/ (get_datasets). The distribution
+  endpoint is rewritten to the connector's own address; remoteAddress
+  is used later by the /pull proxy to reach the real data source.
 end note
 
 == STEP 0: Catalog Discovery (optional sync) ==
