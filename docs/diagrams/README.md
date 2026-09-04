@@ -7,6 +7,9 @@ PlantUML version is kept alongside it in
 [`dsp-protocol-sequence.puml`](dsp-protocol-sequence.puml). Both mirror the demo
 in [`docker-compose/USAGE.md`](../../docker-compose/USAGE.md).
 
+> New to these endpoints? Read the step-by-step, example-driven walkthrough in
+> [`docs/dsp-endpoints-explained.md`](../dsp-endpoints-explained.md).
+
 ```mermaid
 sequenceDiagram
     autonumber
