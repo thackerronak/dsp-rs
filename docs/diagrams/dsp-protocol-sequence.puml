@@ -1,0 +1,236 @@
+@startuml
+title Dataspace Protocol (DSP 2025-1) — Catalog, Contract Negotiation & Transfer (dsp-rs)
+autonumber
+skinparam Style strictuml
+skinparam SequenceMessageAlignment center
+skinparam NoteBackgroundColor #FEF9E7
+skinparam NoteBorderColor #D4AC0D
+
+actor "Data Consumer\n(internal API caller)" as User
+participant "Consumer Connector\n(did:web:party-b-connector%3A3000)\nhttp://party-b-connector:3000" as Consumer
+participant "Consumer Wallet\n(SSI / OpenID4VP)" as Wallet
+participant "Provider Connector\n(did:web:party-a-connector%3A3000)\nhttp://party-a-connector:3000" as Provider
+
+note over Consumer, Provider #EBF5FB
+  All DSP messages are exchanged under the JSON-LD context
+  "https://w3id.org/dspace/2025/1/context.jsonld"
+  on the base path **/api/2025/1**.
+  Negotiation and Transfer are **asynchronous**: the receiver
+  ACKs immediately (201/200) and later pushes state changes to
+  the sender's **callbackAddress**.
+end note
+
+== STEP 0: Catalog Discovery (optional sync) ==
+
+Consumer -> Provider: POST /api/2025/1/catalog/request\n[Authorization: Bearer <si_token>]\n[Content-Type: application/json]
+note left #FEF9E7
+  **CatalogRequestMessage**
+  {
+    "@context": ["https://w3id.org/dspace/2025/1/context.jsonld"],
+    "@type": "CatalogRequestMessage",
+    "filter": []
+  }
+end note
+Provider --> Consumer: HTTP 200 OK
+note right #EBF5FB
+  **Catalog** (dcat:Catalog)
+  {
+    "@type": "dcat:Catalog",
+    "dcat:dataset": [{
+      "@id": "urn:uuid:3afeadd8-...-8394a8836d57",
+      "odrl:hasPolicy": [{ "@id": "urn:uuid:2828282:...a88", ... }],
+      "dcat:distribution": [{
+        "dcat:accessService": {
+          "dcat:endpointUrl": "http://party-a-connector:3000"
+        }
+      }]
+    }]
+  }
+end note
+
+== STEP 1: Self-Issued Token Acquisition (DCP handshake) ==
+
+note over Consumer, Provider #FDEDEC
+  Performed on demand before each protected DSP call and cached
+  until expiry (Authenticator::get_token). The presented token is
+  an **ES256** JWT backed by a Verifiable Presentation.
+end note
+
+Consumer -> Provider: POST /auth/verify_me\n{ "did_web": "did:web:party-b-connector%3A3000" }
+Provider --> Consumer: HTTP 200 OK\n**Session** { session_id, openid4vp_url }
+
+Consumer -> Wallet: POST /wallet/{id}/credentials/present\n{ "request_url": "<openid4vp_url>" }
+Wallet --> Provider: OpenID4VP — submit Verifiable Presentation
+Wallet --> Consumer: HTTP 200 OK
+
+loop Poll until status == valid (max ~10s, every 3s)
+    Consumer -> Provider: GET /auth/status/{session_id}
+    Provider --> Consumer: HTTP 200 OK\n**Status** (pending | valid + <access_token>)
+end
+
+note over Consumer #EAFAF1
+  Consumer now holds a Bearer <si_token> for the Provider.
+  (The reverse also happens: when the Provider calls back, it
+  first fetches its own token from the Consumer's /auth/verify_me.)
+end note
+
+== STEP 2: Contract Negotiation (async, callback-based) ==
+
+Consumer -> Provider: POST /api/2025/1/negotiations/request\n[Authorization: Bearer <si_token>]
+note left #FEF9E7
+  **ContractRequestMessage**
+  {
+    "@context": ["https://w3id.org/dspace/2025/1/context.jsonld"],
+    "@type": "ContractRequestMessage",
+    "consumerPid": "urn:uuid:<consumer_pid>",
+    "offer": {
+      "@type": "Offer",
+      "@id": "urn:uuid:2828282:...a88",
+      "target": "urn:uuid:3afeadd8-...-8394a8836d57"
+    },
+    "callbackAddress": "http://party-b-connector:3000/api/2025/1"
+  }
+end note
+
+Provider -> Consumer: GET /.well-known/did.json\n(resolve consumer did:web & verify ES256 si_token signature)
+Consumer --> Provider: HTTP 200 OK (Consumer DID Document)
+
+Provider --> Consumer: HTTP 201 Created
+note right #EBF5FB
+  **ContractNegotiation** (state = REQUESTED)
+  {
+    "@type": "ContractNegotiation",
+    "providerPid": "urn:uuid:<provider_pid>",
+    "consumerPid": "urn:uuid:<consumer_pid>",
+    "state": "REQUESTED"
+  }
+end note
+
+alt Provider offers a (counter) ContractOffer first
+    Provider -> Consumer: POST /api/2025/1/negotiations/{consumer_pid}/offers\n[Authorization: Bearer <provider_si_token>]
+    note left #FEF9E7
+      **ContractOfferMessage**
+      { "@type": "ContractOfferMessage",
+        "providerPid": "...", "consumerPid": "...",
+        "offer": { "@type": "Offer", ... },
+        "callbackAddress": "http://party-a-connector:3000/api/2025/1" }
+    end note
+    Consumer --> Provider: HTTP 200 OK (state = OFFERED)
+
+    Consumer -> Provider: POST /api/2025/1/negotiations/{provider_pid}/request\n(secondary ContractRequestMessage accepting the offer)
+    Provider --> Consumer: HTTP 200 OK (state = ACCEPTED)
+else Provider agrees to the consumer's original offer
+    note over Provider #EAFAF1: Provider evaluates the offer against its policy engine.
+end
+
+== STEP 2b: Agreement & Verification ==
+
+Provider -> Consumer: POST /api/2025/1/negotiations/{consumer_pid}/agreement\n[Authorization: Bearer <provider_si_token>]
+note left #EAFAF1
+  **ContractAgreementMessage**
+  {
+    "@type": "ContractAgreementMessage",
+    "providerPid": "...", "consumerPid": "...",
+    "agreement": {
+      "@type": "Agreement",
+      "@id": "urn:uuid:<agreement_id>",
+      "target": "urn:uuid:3afeadd8-...",
+      "assigner": "did:web:party-a-connector%3A3000",
+      "assignee": "did:web:party-b-connector%3A3000",
+      "timestamp": "2026-08-31T11:06:23Z",
+      "permission": [{ "action": "use", "constraint": [...] }]
+    }
+  }
+end note
+Consumer --> Provider: HTTP 200 OK (state = AGREED)
+
+Consumer -> Provider: POST /api/2025/1/negotiations/{provider_pid}/agreement/verification\n[Authorization: Bearer <si_token>]
+note right #FEF9E7
+  **ContractAgreementVerificationMessage**
+  { "@type": "ContractAgreementVerificationMessage",
+    "providerPid": "...", "consumerPid": "..." }
+end note
+Provider --> Consumer: HTTP 200 OK (state = VERIFIED)
+
+Provider -> Consumer: POST /api/2025/1/negotiations/{consumer_pid}/events\n[Authorization: Bearer <provider_si_token>]
+note left #EBF5FB
+  **ContractNegotiationEventMessage**
+  { "@type": "ContractNegotiationEventMessage",
+    "providerPid": "...", "consumerPid": "...",
+    "eventType": "FINALIZED" }
+end note
+Consumer --> Provider: HTTP 200 OK (state = FINALIZED)
+
+note over Consumer #EAFAF1
+  Consumer stores the finalized Agreement.
+  GET /api-internal/negotiate/{consumer_pid} now returns
+  state "finalized" with the agreement "@id".
+end note
+
+== STEP 3: Transfer Process (async, callback-based) ==
+
+Consumer -> Provider: POST /api/2025/1/transfers/request\n[Authorization: Bearer <si_token>]
+note left #FEF9E7
+  **TransferRequestMessage**
+  {
+    "@context": ["https://w3id.org/dspace/2025/1/context.jsonld"],
+    "@type": "TransferRequestMessage",
+    "consumerPid": "urn:uuid:<consumer_pid>",
+    "agreementId": "urn:uuid:<agreement_id>",
+    "format": "HttpData-PULL",
+    "callbackAddress": "http://party-b-connector:3000/api/2025/1"
+  }
+end note
+Provider --> Consumer: HTTP 201 Created
+note right #EBF5FB
+  **TransferProcess** (state = REQUESTED)
+  { "@type": "TransferProcess",
+    "providerPid": "...", "consumerPid": "...",
+    "state": "REQUESTED" }
+end note
+
+Provider -> Consumer: POST /api/2025/1/transfers/{consumer_pid}/start\n[Authorization: Bearer <provider_si_token>]
+note left #EAFAF1
+  **TransferStartMessage**
+  {
+    "@type": "TransferStartMessage",
+    "providerPid": "...", "consumerPid": "...",
+    "dataAddress": {
+      "@type": "DataAddress",
+      "endpointType": "https://w3id.org/idsa/v4.1/HTTP",
+      "endpoint": "http://party-a-connector:3000/pull/...",
+      "endpointProperties": [
+        { "@type": "EndpointProperty",
+          "name": "authorization", "value": "<transfer_token>" }
+      ]
+    }
+  }
+end note
+Consumer --> Provider: HTTP 200 OK (state = STARTED)
+
+opt Consumer pulls the data (HttpData-PULL)
+    Consumer -> Provider: GET/POST http://party-a-connector:3000/pull/...\n[Authorization: <transfer_token>]
+    Provider --> Consumer: HTTP 200 OK — dataset payload
+    note over Provider #FDEDEC
+      Reverse proxy validates the transfer token (new_transfer_token)
+      and forwards the request to the backing data source.
+    end note
+end
+
+Consumer -> Provider: POST /api/2025/1/transfers/{provider_pid}/completion\n[Authorization: Bearer <si_token>]
+note right #FEF9E7
+  **TransferCompletionMessage**
+  { "@type": "TransferCompletionMessage",
+    "providerPid": "...", "consumerPid": "..." }
+end note
+Provider --> Consumer: HTTP 200 OK (state = COMPLETED)
+
+note over Consumer, Provider #EBF5FB
+  Either party may also send, at the matching endpoints:
+  **TransferSuspensionMessage** (.../{pid}/suspension),
+  **TransferTerminationMessage** (.../{pid}/termination),
+  or, during negotiation,
+  **ContractNegotiationTerminationMessage** (.../{pid}/termination).
+end note
+
+@enduml
