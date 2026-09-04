@@ -101,7 +101,22 @@ Because negotiation and transfer are asynchronous, the receiver ACKs immediately
 (`201`/`200`) and later pushes each state change to the sender's
 `callbackAddress`.
 
-### Rendering the PlantUML source
+### PlantUML rendered from GitHub (live)
+
+The PlantUML server can fetch the `.puml` straight from GitHub and render it — no
+local tooling needed. The image below is generated on the fly from the raw file on
+the `docs` branch:
+
+![DSP 2025-1 sequence diagram (PlantUML)](https://www.plantuml.com/plantuml/proxy?cache=no&fmt=svg&src=https://raw.githubusercontent.com/thackerronak/dsp-rs/docs/docs/diagrams/dsp-protocol-sequence.puml)
+
+- **Live link (SVG):** <https://www.plantuml.com/plantuml/proxy?cache=no&fmt=svg&src=https://raw.githubusercontent.com/thackerronak/dsp-rs/docs/docs/diagrams/dsp-protocol-sequence.puml>
+- **Live link (PNG):** <https://www.plantuml.com/plantuml/proxy?cache=no&fmt=png&src=https://raw.githubusercontent.com/thackerronak/dsp-rs/docs/docs/diagrams/dsp-protocol-sequence.puml>
+
+> The `proxy?src=<raw URL>` form makes `plantuml.com` fetch and render the file
+> itself. It reads the raw file from the `docs` branch — change the branch segment
+> in the URL (`.../dsp-rs/<branch>/docs/diagrams/...`) to render another branch.
+
+### Rendering the PlantUML source locally
 
 ```sh
 # PNG
