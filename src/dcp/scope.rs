@@ -18,10 +18,10 @@ impl ScopeQuery {
             if !rest.is_empty() {
                 return Some(Self::Type(rest.to_string()));
             }
-        } else if let Some(rest) = scope.strip_prefix(SCOPE_ID_PREFIX) {
-            if !rest.is_empty() {
-                return Some(Self::Id(rest.to_string()));
-            }
+        } else if let Some(rest) = scope.strip_prefix(SCOPE_ID_PREFIX)
+            && !rest.is_empty()
+        {
+            return Some(Self::Id(rest.to_string()));
         }
         None
     }

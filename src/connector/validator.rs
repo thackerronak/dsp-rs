@@ -57,13 +57,6 @@ impl SchemaValidator {
         Ok(Self { validators })
     }
 
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self {
-            validators: HashMap::new(),
-        }
-    }
-
     pub(crate) fn validate<T: HasSchemaName>(&self, data: &Value) -> anyhow::Result<()> {
         let schema = T::NAME;
         if let Some(validator) = self.validators.get(schema) {
@@ -85,7 +78,7 @@ async fn load_schemas(root: PathBuf) -> anyhow::Result<HashMap<String, Value>> {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             match path.file_name().and_then(|n| n.to_str()) {
-                Some(name) if name == "example" => continue,
+                Some("example") => continue,
                 Some(name) => {
                     if path.is_dir() {
                         stack.push(path);

@@ -40,7 +40,7 @@ impl AuthClaims {
         self.data
             .get("exp")
             .and_then(|v| v.as_i64())
-            .map_or(false, |exp| exp < threshold)
+            .is_some_and(|exp| exp < threshold)
     }
 
     pub(crate) fn subject(&self) -> anyhow::Result<&str> {
@@ -48,11 +48,10 @@ impl AuthClaims {
         return Ok("");
 
         #[cfg(not(feature = "tck"))]
-        Ok(self
-            .data
+        self.data
             .get("sub")
             .and_then(|v| v.as_str())
-            .ok_or(anyhow::anyhow!("No subject in claims"))?)
+            .ok_or(anyhow::anyhow!("No subject in claims"))
     }
 
     #[allow(dead_code)]
@@ -61,11 +60,10 @@ impl AuthClaims {
         return Ok("");
 
         #[cfg(not(feature = "tck"))]
-        Ok(self
-            .data
+        self.data
             .get("iss")
             .and_then(|v| v.as_str())
-            .ok_or(anyhow::anyhow!("No issuer in claims"))?)
+            .ok_or(anyhow::anyhow!("No issuer in claims"))
     }
 }
 
@@ -97,7 +95,7 @@ where
             .and_then(|value| value.to_str().ok())
             .ok_or((StatusCode::UNAUTHORIZED, "Missing header".into()))?;
 
-        Ok(state
+        state
             .authenticator
             .decode(
                 auth_header
@@ -110,6 +108,6 @@ where
                     StatusCode::UNAUTHORIZED,
                     format!("Failed to decode access token, error: {err}"),
                 )
-            })?)
+            })
     }
 }

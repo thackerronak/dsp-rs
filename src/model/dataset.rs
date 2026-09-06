@@ -63,7 +63,7 @@ impl Distribution {
             r#type: "Distribution".into(),
             access_service: AccessService::Concrete(DataService {
                 r#type: "DataService".into(),
-                resource: format!("urn:uuid:{}", uuid::Uuid::new_v4().to_string()).into(),
+                resource: format!("urn:uuid:{}", uuid::Uuid::new_v4()).into(),
                 endpoint_url: "https://provider-a.com/connector".into(),
                 serves_dataset: None,
             }),

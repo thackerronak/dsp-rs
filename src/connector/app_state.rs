@@ -54,7 +54,7 @@ impl ParticipantInfo {
 
         // NOTE: we don't include the path for 2025-1
         #[cfg(not(feature = "tck"))]
-        format!("{}", self.external_address)
+        self.external_address.to_string()
     }
 }
 
@@ -191,14 +191,6 @@ impl<T: Store> AppState<T> {
         Self::from_configuration(config, store).await
     }
 
-    async fn from_configuration(
-        config: Configuration,
-        store: T,
-    ) -> anyhow::Result<(Self, Receiver<NegotiationEvent>, Receiver<TransferEvent>)> {
-        let validator = SchemaValidator::new().await?;
-        Self::assemble(config, store, validator).await
-    }
-
     #[cfg(test)]
     pub(crate) async fn from_config_json(
         value: serde_json::Value,
@@ -206,14 +198,14 @@ impl<T: Store> AppState<T> {
     ) -> anyhow::Result<(Self, Receiver<NegotiationEvent>, Receiver<TransferEvent>)> {
         let config: Configuration =
             serde_json::from_value(value).context("Failed to deserialize config")?;
-        Self::assemble(config, store, SchemaValidator::empty()).await
+        Self::from_configuration(config, store).await
     }
 
-    async fn assemble(
+    async fn from_configuration(
         config: Configuration,
         store: T,
-        validator: SchemaValidator,
     ) -> anyhow::Result<(Self, Receiver<NegotiationEvent>, Receiver<TransferEvent>)> {
+        let validator = SchemaValidator::new().await?;
         let key_pair = KeyPair::from_ec_pem(&config.private_key_pem)?;
         let client = Client::new();
 
@@ -221,27 +213,29 @@ impl<T: Store> AppState<T> {
         let local_did = config.participant_info.did_web()?;
         let kid = format!("{local_did}#keys-1");
         let resolver = Arc::new(HttpDidResolver::new(client.clone()));
-        let credential_store =
-            Arc::new(FileCredentialStore::new(native.credential_store_path.into()));
+        let credential_store = Arc::new(FileCredentialStore::new(
+            native.credential_store_path.into(),
+        ));
 
-        let backend: Arc<dyn AuthBackend> = Arc::new(NativeBackend::new_wallet(NativeWalletConfig {
-            key_pair: key_pair.clone(),
-            local_did,
-            kid,
-            allowed_issuers: config.allowed_issuers.clone(),
-            resolver,
-            client: client.clone(),
-            store: credential_store,
-            base_address: config.participant_info.external_address.clone(),
-            credential_service_path: native.credential_service_path,
-            issuance_service_path: native.issuance_service_path,
-            sts_client_id: native
-                .sts_client_id
-                .unwrap_or_else(|| "dsp-client".to_string()),
-            sts_client_secret: native
-                .sts_client_secret
-                .unwrap_or_else(|| "dsp-secret".to_string()),
-        }));
+        let backend: Arc<dyn AuthBackend> =
+            Arc::new(NativeBackend::new_wallet(NativeWalletConfig {
+                key_pair: key_pair.clone(),
+                local_did,
+                kid,
+                allowed_issuers: config.allowed_issuers.clone(),
+                resolver,
+                client: client.clone(),
+                store: credential_store,
+                base_address: config.participant_info.external_address.clone(),
+                credential_service_path: native.credential_service_path,
+                issuance_service_path: native.issuance_service_path,
+                sts_client_id: native
+                    .sts_client_id
+                    .unwrap_or_else(|| "dsp-client".to_string()),
+                sts_client_secret: native
+                    .sts_client_secret
+                    .unwrap_or_else(|| "dsp-secret".to_string()),
+            }));
 
         let (tx_n, rx_n) = channel::<NegotiationEvent>(10);
         let (tx_t, rx_t) = channel::<TransferEvent>(10);

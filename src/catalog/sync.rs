@@ -68,7 +68,7 @@ async fn do_sync<T: Store>(
 ) -> bool {
     if version.is_none() {
         version.replace(
-            match select_version(&state, &connector.remote_address).await {
+            match select_version(state, &connector.remote_address).await {
                 Ok(Some(v)) => {
                     info!("Using version {} for connector {name}", v.version);
                     v
@@ -111,8 +111,8 @@ async fn do_sync<T: Store>(
     };
 
     match fetch_and_sync_catalog(
-        &state,
-        &name,
+        state,
+        name,
         &connector.remote_address,
         access_token.clone(),
         version,
@@ -144,8 +144,7 @@ async fn select_version<T: Store>(
     Ok(versions
         .protocol_versions
         .into_iter()
-        .filter(|v| v.version == "2025-1" && v.binding == "HTTPS")
-        .next())
+        .find(|v| v.version == "2025-1" && v.binding == "HTTPS"))
 }
 
 async fn fetch_and_sync_catalog<T: Store>(

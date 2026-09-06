@@ -220,10 +220,10 @@ impl AuthBackend for NativeBackend {
     }
 
     async fn did_document(&self, _client: &Client, did: &str) -> anyhow::Result<Value> {
-        if did == self.local_did {
-            if let Some(document) = &self.local_did_document {
-                return Ok(document.clone());
-            }
+        if did == self.local_did
+            && let Some(document) = &self.local_did_document
+        {
+            return Ok(document.clone());
         }
 
         let doc = self.resolver.resolve(did).await?;

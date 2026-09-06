@@ -69,17 +69,13 @@ impl Authenticator {
         debug!("Presented credentials:\n{:?}", &credentials);
         let mut found = false;
         for (id, cd) in credentials {
-            match id.as_str() {
-                "identity" => {
-                    if let Ok(data) =
-                        serde_json::from_value::<IdentityCredentialData>(cd.credential_data)
-                    {
-                        claims.data.insert("email".into(), data.email);
-                        claims.data.insert("country".into(), data.address.country);
-                        found = true;
-                    }
-                }
-                _ => {}
+            if id.as_str() == "identity"
+                && let Ok(data) =
+                    serde_json::from_value::<IdentityCredentialData>(cd.credential_data)
+            {
+                claims.data.insert("email".into(), data.email);
+                claims.data.insert("country".into(), data.address.country);
+                found = true;
             }
         }
         if !found {

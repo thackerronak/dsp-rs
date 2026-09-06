@@ -173,7 +173,7 @@ impl MessageOffer {
     }
 
     pub(crate) fn new(dataset_id: String, policy: Policy) -> Self {
-        let offer_id = format!("urn:uuid:{}", uuid::Uuid::new_v4().to_string());
+        let offer_id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
         Self {
             policy_class: PolicyClass {
                 r#type: "Offer".into(),

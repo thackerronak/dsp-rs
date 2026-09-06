@@ -194,7 +194,7 @@ impl ContractNegotiation<ProviderView> {
                 .map(Some)
             }
             NegotiationState::Accepted(s) => {
-                let id = format!("urn:uuid:{}", uuid::Uuid::new_v4().to_string());
+                let id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
                 let agreement = Agreement::new(id, s.offer, my_did_web, s.assignee);
                 Ok(Some(ContractNegotiation {
                     provider_pid: self.provider_pid,
@@ -388,7 +388,7 @@ pub(crate) async fn contract_request<T: Store>(
         ContractRequestOffer::Concrete(offer) => offer,
     };
 
-    let provider_pid = format!("urn:uuid:{}", uuid::Uuid::new_v4().to_string());
+    let provider_pid = format!("urn:uuid:{}", uuid::Uuid::new_v4());
     let contract = ContractNegotiation {
         provider_pid,
         consumer_pid: request.consumer_pid,
@@ -521,7 +521,7 @@ mod tck {
                 }
                 match s.offer.target.as_str() {
                     "ACN0104" | "ACN0203" | "ACN0207" | "ACN0301" => {
-                        let id = format!("urn:uuid:{}", uuid::Uuid::new_v4().to_string());
+                        let id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
                         // FIXME: assigner and assignee empty
                         let agreement = Agreement::new(id, s.offer, "".to_owned(), "".to_owned());
                         return Ok(Ok(Some(ContractNegotiation {

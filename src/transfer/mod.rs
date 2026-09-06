@@ -511,13 +511,13 @@ async fn handle_event<T: Store>(state: &AppStateTransfer<T>, event: TransferEven
                 pid = event.pid
             );
             let (provider_pid, consumer_pid) = event.payload.into();
-            if let Err(_) =
-                event
-                    .result
-                    .send(Err(AppError::Transfer(TransferError::transfer_not_found(
-                        provider_pid,
-                        consumer_pid,
-                    ))))
+            if event
+                .result
+                .send(Err(AppError::Transfer(TransferError::transfer_not_found(
+                    provider_pid,
+                    consumer_pid,
+                ))))
+                .is_err()
             {
                 error!("Failed to send result");
             }
@@ -528,7 +528,7 @@ async fn handle_event<T: Store>(state: &AppStateTransfer<T>, event: TransferEven
                 "Failed to fetch transfer {pid}, error: {err}",
                 pid = event.pid
             );
-            if let Err(_) = event.result.send(Err(AppError::Generic(err))) {
+            if event.result.send(Err(AppError::Generic(err))).is_err() {
                 error!("Failed to send result");
             }
             return;
@@ -547,7 +547,7 @@ async fn handle_event<T: Store>(state: &AppStateTransfer<T>, event: TransferEven
                 AppError::Generic(err)
             })
     }
-    if let Err(_) = event.result.send(result) {
+    if event.result.send(result).is_err() {
         error!("Failed to send result");
     }
 }
@@ -588,7 +588,7 @@ pub(crate) async fn transfer<T: Store>(
     format: String,
     connector: Connector,
 ) -> anyhow::Result<String> {
-    let consumer_pid = format!("urn:uuid:{}", uuid::Uuid::new_v4().to_string());
+    let consumer_pid = format!("urn:uuid:{}", uuid::Uuid::new_v4());
     let process = TransferProcess {
         provider_pid: "".into(),
         consumer_pid: consumer_pid.clone(),
@@ -600,8 +600,8 @@ pub(crate) async fn transfer<T: Store>(
     let n = Transfer::Consumer {
         process,
         agreement,
-        format: format,
-        connector: connector,
+        format,
+        connector,
         data_address: None, // FIXME: depends on format
     };
     store.save_transfer(&n).await?;

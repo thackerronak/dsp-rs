@@ -97,11 +97,8 @@ impl<V: NegotiationStateData> NegotiationState<V> {
         let mut state = self.to_string().to_lowercase();
 
         // special handling for finalized
-        match self {
-            NegotiationState::Finalized(data) => {
-                state = format!("{state}-{}", data.agreement.policy_class.resource.id);
-            }
-            _ => {}
+        if let NegotiationState::Finalized(data) = self {
+            state = format!("{state}-{}", data.agreement.policy_class.resource.id);
         }
 
         if self.is_pending() {
@@ -401,9 +398,13 @@ async fn handle_event<T: Store>(state: &AppStateNegotiation<T>, event: Negotiati
                 pid = event.pid
             );
             let (provider_pid, consumer_pid) = event.payload.into();
-            if let Err(_) = event.result.send(Err(AppError::Contract(
-                ContractNegotiationError::contract_not_found(provider_pid, consumer_pid),
-            ))) {
+            if event
+                .result
+                .send(Err(AppError::Contract(
+                    ContractNegotiationError::contract_not_found(provider_pid, consumer_pid),
+                )))
+                .is_err()
+            {
                 error!("Failed to send result");
             }
             return;
@@ -413,7 +414,7 @@ async fn handle_event<T: Store>(state: &AppStateNegotiation<T>, event: Negotiati
                 "Failed to fetch negotiation {pid}, error: {err}",
                 pid = event.pid
             );
-            if let Err(_) = event.result.send(Err(AppError::Generic(err))) {
+            if event.result.send(Err(AppError::Generic(err))).is_err() {
                 error!("Failed to send result");
             }
             return;
@@ -432,7 +433,7 @@ async fn handle_event<T: Store>(state: &AppStateNegotiation<T>, event: Negotiati
                 AppError::Generic(err)
             })
     }
-    if let Err(_) = event.result.send(result) {
+    if event.result.send(result).is_err() {
         error!("Failed to send result");
     }
 }
@@ -478,7 +479,7 @@ pub(crate) struct Connector {
 impl Connector {
     pub(crate) fn api_address(&self) -> String {
         #[cfg(feature = "tck")]
-        return format!("{}", self.address);
+        return self.address.to_string();
 
         // NOTE: currently only 2025-1 supported
         #[cfg(not(feature = "tck"))]
@@ -491,7 +492,7 @@ pub(crate) async fn negotiate<T: Store>(
     offer: MessageOffer,
     connector: Connector,
 ) -> anyhow::Result<String> {
-    let consumer_pid = format!("urn:uuid:{}", uuid::Uuid::new_v4().to_string());
+    let consumer_pid = format!("urn:uuid:{}", uuid::Uuid::new_v4());
     let contract = ContractNegotiation {
         provider_pid: "".into(),
         consumer_pid: consumer_pid.clone(),

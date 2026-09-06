@@ -29,7 +29,7 @@ impl TransferProcess<ConsumerView> {
         #[cfg_attr(not(feature = "tck"), allow(unused_mut))] mut self,
         state: &AppStateTransfer<T>,
         agreement: &Agreement,
-        format: &String,
+        format: &str,
         connector: &Connector,
         data_address: &Option<DataAddress>,
     ) -> anyhow::Result<Option<Self>> {
@@ -60,7 +60,7 @@ impl TransferProcess<ConsumerView> {
             TransferState::Requested(s) if s.is_pending() => {
                 let request = TransferRequest::new(
                     agreement.policy_class.resource.id.clone(),
-                    format.clone(),
+                    format.to_string(),
                     callback_address,
                     self.consumer_pid,
                     data_address.clone(),
@@ -98,7 +98,7 @@ impl TransferProcess<ConsumerView> {
                     &state.validator,
                     &format!(
                         "{}/transfers/{}/start",
-                        connector_address, &start.provider_pid
+                        connector_address, start.provider_pid
                     ),
                     Some(get_access_token().await?),
                     start,
@@ -129,7 +129,7 @@ impl TransferProcess<ConsumerView> {
                     &state.validator,
                     &format!(
                         "{}/transfers/{}/suspension",
-                        connector_address, &suspend.provider_pid
+                        connector_address, suspend.provider_pid
                     ),
                     Some(get_access_token().await?),
                     suspend,
@@ -160,7 +160,7 @@ impl TransferProcess<ConsumerView> {
                     &state.validator,
                     &format!(
                         "{}/transfers/{}/completion",
-                        connector_address, &complete.provider_pid
+                        connector_address, complete.provider_pid
                     ),
                     Some(get_access_token().await?),
                     complete,
@@ -188,7 +188,7 @@ impl TransferProcess<ConsumerView> {
                     &state.validator,
                     &format!(
                         "{}/transfers/{}/termination",
-                        connector_address, &terminate.provider_pid
+                        connector_address, terminate.provider_pid
                     ),
                     Some(get_access_token().await?),
                     terminate,

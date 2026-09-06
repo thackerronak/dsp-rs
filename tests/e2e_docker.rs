@@ -73,7 +73,10 @@ fn client() -> reqwest::Client {
 
 async fn wait_healthy(client: &reqwest::Client, base: &str) {
     for _ in 0..90 {
-        if let Ok(resp) = client.get(format!("{base}/.well-known/did.json")).send().await
+        if let Ok(resp) = client
+            .get(format!("{base}/.well-known/did.json"))
+            .send()
+            .await
             && resp.status().is_success()
         {
             return;

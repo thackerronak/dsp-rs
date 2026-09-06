@@ -21,7 +21,14 @@ cargo test
 cargo test <name>                 # single test
 
 ./build.sh                        # build the connector:latest docker image
+
+# end-to-end test over real containers (docker required; ignored by default)
+cargo test --test e2e_docker -- --ignored --nocapture
 ```
+
+The `e2e_docker` integration test (`tests/e2e_docker.rs`) builds the image if needed,
+`docker compose up`s both connectors, seeds a credential, and drives the native DCP
+flow (STS -> `/auth/token` -> `/catalog/request`), tearing the stack down afterwards.
 
 Run against the TCK harness:
 

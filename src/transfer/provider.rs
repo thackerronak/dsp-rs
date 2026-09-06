@@ -93,7 +93,7 @@ impl TransferProcess<ProviderView> {
                     &state.validator,
                     &format!(
                         "{}/transfers/{}/start",
-                        callback_address, &start.consumer_pid
+                        callback_address, start.consumer_pid
                     ),
                     Some(get_access_token().await?),
                     start,
@@ -124,7 +124,7 @@ impl TransferProcess<ProviderView> {
                     &state.validator,
                     &format!(
                         "{}/transfers/{}/suspension",
-                        callback_address, &suspend.consumer_pid
+                        callback_address, suspend.consumer_pid
                     ),
                     Some(get_access_token().await?),
                     suspend,
@@ -155,7 +155,7 @@ impl TransferProcess<ProviderView> {
                     &state.validator,
                     &format!(
                         "{}/transfers/{}/completion",
-                        callback_address, &complete.consumer_pid
+                        callback_address, complete.consumer_pid
                     ),
                     Some(get_access_token().await?),
                     complete,
@@ -183,7 +183,7 @@ impl TransferProcess<ProviderView> {
                     &state.validator,
                     &format!(
                         "{}/transfers/{}/termination",
-                        callback_address, &terminate.consumer_pid
+                        callback_address, terminate.consumer_pid
                     ),
                     Some(get_access_token().await?),
                     terminate,
@@ -265,7 +265,7 @@ pub(crate) async fn transfer_request<T: Store>(
         }
     };
 
-    let provider_pid = format!("urn:uuid:{}", uuid::Uuid::new_v4().to_string());
+    let provider_pid = format!("urn:uuid:{}", uuid::Uuid::new_v4());
     let process = TransferProcess {
         provider_pid,
         consumer_pid: request.consumer_pid,

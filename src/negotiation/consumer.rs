@@ -128,7 +128,7 @@ impl ContractNegotiation<ConsumerView> {
                                 state: NegotiationState::Requested(RequestedData {
                                     sent: true,
                                     payload: RequestedDataPayload {
-                                        offer: offer,
+                                        offer,
                                         provider_pid: Some(response.provider_pid),
                                     },
                                 }),

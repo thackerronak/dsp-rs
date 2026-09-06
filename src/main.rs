@@ -1,3 +1,7 @@
+// `AppError` intentionally aggregates the domain error enums; boxing every Result to
+// shrink it is not worth the churn for this connector.
+#![allow(clippy::result_large_err)]
+
 use axum::{
     Json,
     http::StatusCode,

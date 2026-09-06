@@ -217,7 +217,7 @@ async fn find_data_asset_target<T: Store>(
         anyhow::bail!("invalid auth claims")
     };
 
-    let agreement = match state.store.get_transfer(&provider_pid).await? {
+    let agreement = match state.store.get_transfer(provider_pid).await? {
         Some(Transfer::Provider {
             process, agreement, ..
         }) => {
