@@ -26,15 +26,20 @@ tracing-subscriber = "0.3.19"
 url = { version = "2.5" }
 uuid = { version = "1.16.0", features = ["v4"] }
 
-base64 = { version = "0.23", optional = true }
-p256 = { version = "0.14.0", optional = true }
-rand = { version = "0.10.2", optional = true }
+base64 = "0.23"
+p256 = "0.14.0"
+rand = "0.10.2"
 
 [features]
 default = ["echo"]
 tck = []
-echo = ["dep:base64"]
-keygen = ["dep:base64", "dep:p256", "dep:rand"]
+echo = []
+keygen = []
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
+tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread"] }
 
 [[bin]]
 name = "keygen"

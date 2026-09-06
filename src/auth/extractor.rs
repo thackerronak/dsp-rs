@@ -33,6 +33,7 @@ impl Default for AuthClaims {
 }
 
 impl AuthClaims {
+    #[allow(dead_code)]
     pub(crate) fn is_expired(&self) -> bool {
         let threshold = Utc::now().timestamp() + 60;
 
@@ -54,6 +55,7 @@ impl AuthClaims {
             .ok_or(anyhow::anyhow!("No subject in claims"))?)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn issuer(&self) -> anyhow::Result<&str> {
         #[cfg(feature = "tck")]
         return Ok("");

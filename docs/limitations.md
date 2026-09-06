@@ -14,9 +14,9 @@ treat this as a "known gaps" list, not a criticism.
 
 | Item | Detail | Where |
 |------|--------|-------|
-| **HTTPS not enforced** | DID resolution passes `enforce_https = false`, and the demo runs over `http://`. Enforce HTTPS (and certificate validation) before production. | `src/auth/mod.rs` (`resolve_did_web(did_web, false)`) |
-| **Single verification key assumed** | The JWT `kid` header isn't used when selecting the DID's verification key — it assumes one key per DID. Multi-key DIDs / key rotation aren't handled. | `src/auth/mod.rs` |
-| **Credential types are hardcoded** | Only a fixed `identity_credential` is requested at `verify_me`; credentials can't yet be selected per-offer, so a policy can't demand a specific framework/use-case credential per dataset. | `src/auth/mod.rs` |
+| **HTTPS not enforced** | DID resolution passes `enforce_https = false`, and the demo runs over `http://`. Enforce HTTPS (and certificate validation) before production. | `src/dcp/resolver.rs` (`resolve_did_web(did, false)`) |
+| **Single verification key assumed** | The JWT `kid` header isn't used when selecting the DID's verification key — it assumes one key per DID. Multi-key DIDs / key rotation aren't handled. | `src/auth/model.rs` (`decoding_key`) |
+| **Credential types are hardcoded** | Only a fixed `identity_credential` is requested by the verifier's presentation query, and only the `identity` claim is mapped; credentials can't yet be selected per-offer, so a policy can't demand a specific framework/use-case credential per dataset. | `src/dcp/verifier.rs`, `src/auth/mod.rs` (`derive_access_token`) |
 
 ## Protocol coverage
 

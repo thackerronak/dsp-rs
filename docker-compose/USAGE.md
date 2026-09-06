@@ -1,5 +1,10 @@
 # Using the connectors to negotiate contracts and transfer data assets
 
+> Prerequisite: bring the connectors up and seed identity credentials as described in
+> [SETUP.md](SETUP.md). Cross-connector calls authenticate via the native DCP
+> `/auth/token` exchange, which requires each party to hold a credential issued by a
+> trusted `allowed_issuers` DID.
+
 ## Catalog sync
 
 The connector for `party-a` provides a demo dataset, which can be found under `party-a/data/datasets`. Upon syncing

@@ -1,41 +1,27 @@
-# Proprietary authentication protocol
+# Native DCP authentication protocol
 
-The sequence diagram below illustrates our proprietary authentication protocol — a protocol based on OpenID4VP that
-shares similarities with the [Dataspace Claims Protocol](https://eclipse-dataspace-dcp.github.io/decentralized-claims-protocol/v1.0.1/).
+The sequence diagram below illustrates the connector's built-in authentication — a
+native implementation of the [Decentralized Claims Protocol](https://eclipse-dataspace-dcp.github.io/decentralized-claims-protocol/v1.0.1/).
+Each connector is its own issuer, holder, and verifier behind a single `did:web`;
+there is no external wallet or verifier service. Token exchange is a synchronous
+**pull** — no session, no polling.
 
 ```mermaid
 sequenceDiagram
-    participant W as Wallet A
-    participant A as Connector A
-    participant B as Connector B
-    participant V as Verifier B
+    participant A as Connector A (requester / holder)
+    participant B as Connector B (verifier)
 
     rect rgba(255, 0, 43, 0.15)
-    note over A,B: Authentication Phase
+    note over A,B: Authentication Phase (native DCP pull)
     activate A
-    A->>B: POST /auth/verify_me
+    A->>A: STS mints Self-Issued ID Token (aud = B)
+    A->>B: POST /auth/token (Bearer SI token)
     activate B
-    B->>V: POST /verification-session/create
-    activate V
-    V-->>B: OpenID4VP request URL + ...
-
-    B-->>A: OpenID4VP request URL + session_id
-    deactivate B
-
-    A->>W: POST /credentials/present
-    activate W
-    deactivate A
-    W->>V: POST /verification-session/{session_id}/response
-    deactivate W
-
-    activate A
-    A->>B: GET /auth/status/{session_id}
-    activate B
-    B->>V: POST /verification-session/{session_id}/info
-    V->>B: Credential Data
-    deactivate V
-    B->>B: encode_access_token()
-    B->>A: <<access_token>> with derived Claims
+    B->>B: validate SI token (signature via A's DID doc, aud, jti replay, exp)
+    B->>A: POST /api/credentials/v1/presentations/query (Bearer B's SI token, scope)
+    A-->>B: PresentationResponseMessage { JWT-VP }
+    B->>B: validate VP + VC (issuer in allowed_issuers), derive_access_token()
+    B-->>A: { access_token, token_type: Bearer, expires_in }
     deactivate B
     deactivate A
     end
@@ -43,7 +29,7 @@ sequenceDiagram
     rect rgba(0, 255, 34, 0.4)
     note over A,B: Negotiation Phase
     activate A
-    Note over A,B: Authroization: Bearer <<access_token>>
+    Note over A,B: Authorization: Bearer <<access_token>>
     A->>B: POST /api/2025/1/negotiations/request
     activate B
     B->>A:

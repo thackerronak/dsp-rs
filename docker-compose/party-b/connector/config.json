@@ -4,16 +4,24 @@
     "external_address": "http://party-b-connector:3000"
   },
   "private_key_pem": "-----BEGIN PRIVATE KEY-----\r\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgyXaPLDXryoTFztCs\r\n4NK1lAEXVlV90auLyuD2l7lPO8ihRANCAASWBASsz7Vlb8vqHBM71HfDLe0B4V9G\r\npXqnybHHufxG0U6bhGR5KnukTHqEDFLxEp+eS88qGQtMzG7DB9o3Nzg7\r\n-----END PRIVATE KEY-----",
-  "issuer_url": "http://issuer:7002",
-  "verifier_url": "http://party-b-verifier:7003",
-  "wallet_url": "http://party-b-wallet:7005",
-  "wallet_id": "344cb7a5-6b20-4090-b7fd-a327b5a774a4",
   "allowed_issuers": [
-    "did:web:issuer-did-server"
+    "did:web:party-a-connector%3A3000",
+    "did:web:party-b-connector%3A3000"
   ],
   "federation": {
     "party-a": {
       "remote_address": "http://party-a-connector:3000"
+    }
+  },
+  "auth": {
+    "backend": "native",
+    "native": {
+      "credential_store_path": "/app/data/credentials",
+      "credential_service_path": "/api/credentials/v1",
+      "issuance_service_path": "/api/issuance/v1",
+      "issuer_enabled": true,
+      "sts_client_id": "dsp-client",
+      "sts_client_secret": "dsp-secret"
     }
   }
 }

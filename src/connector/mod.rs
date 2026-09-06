@@ -14,7 +14,10 @@ use crate::{
     auth,
     catalog::{self, sync::catalog_sync},
     connector::{
-        app_state::{AppState, AppStateCatalog, AppStateNegotiation, AppStateTransfer},
+        app_state::{
+            AppState, AppStateAuthentication, AppStateCatalog, AppStateNegotiation,
+            AppStateTransfer,
+        },
         validator::{HasSchemaName, SchemaValidator, ValidatedResponseExt},
     },
     model::metadata::{Auth, ProtocolVersion, VersionResponse},
@@ -30,6 +33,9 @@ pub(crate) mod app_state;
 mod internal_api;
 pub(crate) mod utils;
 pub(crate) mod validator;
+
+#[cfg(all(test, not(feature = "tck")))]
+mod native_e2e;
 
 pub(crate) trait Pending {
     fn is_pending(&self) -> bool {
@@ -96,16 +102,17 @@ pub(crate) async fn start(token: CancellationToken, tracker: &TaskTracker) -> an
     Ok(())
 }
 
-async fn webserver<T>(token: CancellationToken, state: AppState<T>)
+pub(crate) fn build_app<T>(state: AppState<T>) -> Router
 where
     T: Store,
 {
-    info!("Started API server");
-
     let dsp_api_routes = Router::new()
         .nest("/catalog", catalog::router())
         .nest("/negotiations", negotiation::router())
         .nest("/transfers", transfer::router());
+
+    let auth_state = AppStateAuthentication::from_ref(&state);
+    let auth_routes: Router<AppState<T>> = state.authenticator.router().with_state(auth_state);
 
     #[cfg_attr(not(feature = "tck"), allow(unused_mut))]
     let mut app = Router::new()
@@ -115,7 +122,16 @@ where
         .route("/.well-known/dspace-version", get(versions))
         // catalog, negotiation and transfer
         .nest(DSP_API_PATH_2025_1, dsp_api_routes)
-        .nest("/auth", auth::router())
+        .nest("/auth", auth_routes);
+
+    // backend-specific service routes (native DCP wallet: credential/issuance/STS)
+    if let Some(extra) = state.authenticator.backend().extra_routes() {
+        let extra: Router<AppState<T>> = extra.with_state(());
+        app = app.merge(extra);
+    }
+
+    #[cfg_attr(not(feature = "tck"), allow(unused_mut))]
+    let mut app = app
         // reverse proxy
         .nest(
             "/pull",
@@ -141,6 +157,17 @@ where
     {
         app = app.layer(axum::middleware::from_fn(utils::tck::log_req_resp));
     }
+
+    app
+}
+
+async fn webserver<T>(token: CancellationToken, state: AppState<T>)
+where
+    T: Store,
+{
+    info!("Started API server");
+
+    let app = build_app(state);
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app)

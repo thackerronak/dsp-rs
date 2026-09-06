@@ -1,112 +1,79 @@
-# Demo setup
+# Demo setup (native DCP)
+
+Two connectors, `party-a` and `party-b`, each running the built-in native DCP wallet
+(issuer + holder + verifier + STS behind a single `did:web`). There is no external
+wallet, verifier, or issuer service.
+
+## Build the image
+
+```sh
+./build.sh                 # builds connector:latest (compiles inside the image)
+```
 
 ## Start services
 
 ```sh
-docker-compose up
+cd docker-compose
+docker compose up -d
 ```
 
-## Create a wallet for each of the participants
+- `party-a` → http://localhost:13000
+- `party-b` → http://localhost:23000
 
-NOTE: this step has to be performed only once, wallet data is persisted under `[party-a|party-b]/wallet/data`.
+Each connector serves its DID document at `/.well-known/did.json`, derived from its
+`participant_info.external_address`, e.g. `did:web:party-a-connector%3A3000`. The
+document advertises the connector's `CredentialService` and `IssuerService`.
 
-### Create a keypair
+## Keys and trust
+
+Each party's signing key lives in `[party-a|party-b]/connector/config.json` as
+`private_key_pem` — the same key signs SI tokens, issued credentials, and DSP access
+tokens, and its public JWK is published in the DID document. To generate a fresh key:
 
 ```sh
 cargo run --bin keygen --features keygen
 ```
 
-Update the private key PEM inside the connector configurations: `[party-a|party-b]/connector/config.json`.
+Paste the PEM into the respective `config.json` and restart the connector.
 
-### Setup the wallet
+Trust is configured via `allowed_issuers`: the DIDs whose issued credentials a
+verifier will accept. The demo uses the **bilateral** model — each party's
+`allowed_issuers` lists both parties, so each connector trusts credentials issued by
+either side.
 
-```sh
-# create a wallet
-WALLET_ID=$(curl -s -X POST http://localhost:17005/wallet \
-  -H "Content-Type: application/json" \
-  -d '{}' | jq -r '.walletId')
-echo $WALLET_ID
+## Seed identity credentials
 
-# import generated private key
-KEY_ID=$(curl -s -X POST http://localhost:17005/wallet/$WALLET_ID/keys/import \
-  -H "Content-Type: application/json" \
-  -d '{
-    "key": {
-      "type": "jwk",
-      "jwk": {
-        "crv": "P-256",
-        "d": "L01jaTa977ngpyVYpFI_gRJJtAPZedNk1l_2zWlVRCc",
-        "kty": "EC",
-        "x": "R0vym-VxjtpMZArz-fpFhjkRkrNOKWu_GrrMWXr8Uks",
-        "y": "qCQInpBSrA1b9-ckq-Dzeyk3v2_4JnlDAgQ9O__fv1w"
-      }
-    }
-  }' | jq -r '.keyId')
-echo $KEY_ID
-
-# create a DID
-HOLDER_DID=$(curl -s -X POST http://localhost:17005/wallet/$WALLET_ID/dids/create \
-  -H "Content-Type: application/json" \
-  -d '{
-    "method": "web",
-    "keyId": "$KEY_ID",
-    "options": {
-      "domain": "party-a-connector:3000",
-      "path": ""
-    }
-  }' | jq -r '.did')
-echo $HOLDER_DID
-```
-
-NOTE: for `party-b` use the address `http://localhost:27005` and domain `party-b-connector:3000`. The connector provides
-the endpoint `/.well-known/did.json`, from which the DID will be resolved.
-
-Update `[party-a|party-b]/connector/config.json` with the respective IDs of the newly created wallets. After that,
-restart the services such that the connectors are aware of the correct wallet IDs.
+Before a party can authenticate, it must hold an `identity_credential` issued by a
+trusted issuer. Trigger native issuance so each party obtains a credential issued by
+the counterparty:
 
 ```sh
-docker-compose down
-docker-compose up
-```
-
-## Claim credentials from issuer
-
-For each participant, claim a credential from the issuer.
-
-```sh
-# create a credential offer
-OFFER_URL=$(curl -s -X POST 'http://localhost:7002/issuer2/credential-offers' \
+# party-b obtains a credential issued by party-a
+curl -s -X POST http://localhost:23000/api/credentials/v1/request \
   -H 'Content-Type: application/json' \
-  -d '{
-    "profileId": "identityCredentialSdJwt",
-    "authMethod": "PRE_AUTHORIZED",
-    "runtimeOverrides": {
-      "credentialData": {
-        "given_name": "Albert",
-        "family_name": "Einstein",
-        "email": "a.einstein@princeton.edu",
-        "phone_number": "+49301234567",
-        "address": {
-          "street_address": "Einsteinstrasse 1",
-          "locality": "Potsdam",
-          "region": "Brandenburg",
-          "country": "DE"
-        },
-        "birthdate": "1879-03-14",
-        "is_over_18": true,
-        "is_over_21": true,
-        "is_over_65": true
-      }
-    }
-  }' | jq -r '.credentialOffer')
-echo "OFFER_URL=\"$OFFER_URL\""
+  -d '{"issuerDid":"did:web:party-a-connector%3A3000"}'
 
-# claim offer 
-WALLET_ID="..."
-curl -s -X POST http://localhost:17005/wallet/$WALLET_ID/credentials/receive \
-  -H "Content-Type: application/json" \
-  -d "{\"offerUrl\":\"$OFFER_URL\"}"
+# party-a obtains a credential issued by party-b
+curl -s -X POST http://localhost:13000/api/credentials/v1/request \
+  -H 'Content-Type: application/json' \
+  -d '{"issuerDid":"did:web:party-b-connector%3A3000"}'
 ```
 
-NOTE: for `party-b` use port `27005`.
-NOTE: make sure to use the correct wallet IDs for `party-a` and `party-b`.
+The holder resolves the issuer's `IssuerService`, requests the credential, and the
+issuer delivers it back to the holder's `CredentialService`, which stores it under
+`[party-a|party-b]/connector/data/credentials` (files created `0600`).
+
+Verify:
+
+```sh
+curl -s http://localhost:13000/api/credentials/v1/credentials | jq
+curl -s http://localhost:23000/api/credentials/v1/credentials | jq
+```
+
+## Authentication
+
+No manual step is required. When a connector needs a DSP access token from a peer, it
+mints a Self-Issued ID Token and calls the peer's `POST /auth/token`; the peer pulls a
+verifiable presentation from the requester's `CredentialService`, validates it against
+`allowed_issuers`, and returns the access token. Catalog sync (driven by the
+`federation` config) exercises this automatically — see `USAGE.md`.

@@ -26,11 +26,12 @@ no local tooling needed. It mirrors the demo in
   the catalog is assembled per request (see `src/catalog/`).
 - **Step 0 — Catalog discovery**: `POST /api/2025/1/catalog/request` returns the
   provider's `dcat:Catalog` (see `src/catalog/mod.rs`).
-- **Step 1 — Self-issued token acquisition**: the DCP handshake
-  (`/auth/verify_me` → OpenID4VP presentation via the wallet → poll
-  `/auth/status/{session_id}`) yields the ES256 Bearer token that protects every
-  DSP call. Incoming tokens are verified by resolving the caller's
-  `did:web` document at `/.well-known/did.json` (see `src/auth/`).
+- **Step 1 — Access token acquisition**: the native DCP pull
+  (`POST /auth/token` with a Self-Issued ID Token → the verifier pulls a JWT-VP
+  from the caller's `/api/credentials/v1/presentations/query` → validates it) yields
+  the ES256 Bearer access token that protects every DSP call — synchronous, no
+  polling. Incoming access tokens are self-signed by the minting connector and
+  verified by its `AuthClaims` extractor (see `src/auth/` and `src/dcp/`).
 - **Step 2 — Contract negotiation**: asynchronous, callback-based state machine
   (`REQUESTED → OFFERED/ACCEPTED → AGREED → VERIFIED → FINALIZED`) over
   `/api/2025/1/negotiations/*` (see `src/negotiation/`).

@@ -33,7 +33,7 @@ All DSP messages use the JSON-LD context
 | Stage | Doc | Endpoints | Real-world | Output |
 |-------|-----|-----------|-----------|--------|
 | **1. Browse** | [Catalog](catalog.md) | `/catalog/request` | Read the shop's catalogue | A dataset `@id` + its policy |
-| **2. Show ID** | [Auth & Identity](auth-and-identity.md) | `/auth/verify_me`, `/auth/status`, `/.well-known/did.json` | Prove identity → get a badge | A signed access **token** |
+| **2. Show ID** | [Auth & Identity](auth-and-identity.md) | `/auth/token`, `/api/credentials/v1/*`, `/.well-known/did.json` | Prove identity → get a badge | A signed access **token** |
 | **3. Sign contract** | [Negotiation](negotiation.md) | `/negotiations/*` | Sign a contract by registered mail | A finalized **Agreement ID** |
 | **4. Collect goods** | [Transfer](transfer.md) | `/transfers/*`, `/pull` | Pick up with a temporary locker key | The **actual data** |
 

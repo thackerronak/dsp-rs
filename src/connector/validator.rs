@@ -57,6 +57,13 @@ impl SchemaValidator {
         Ok(Self { validators })
     }
 
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self {
+            validators: HashMap::new(),
+        }
+    }
+
     pub(crate) fn validate<T: HasSchemaName>(&self, data: &Value) -> anyhow::Result<()> {
         let schema = T::NAME;
         if let Some(validator) = self.validators.get(schema) {
@@ -83,8 +90,9 @@ async fn load_schemas(root: PathBuf) -> anyhow::Result<HashMap<String, Value>> {
                     if path.is_dir() {
                         stack.push(path);
                     } else if name.ends_with("-schema.json") {
-                        let data = fs::read(path).await?;
-                        let schema: Value = serde_json::from_slice(&data)?;
+                        let text = fs::read_to_string(path).await?;
+                        let text = text.replace("#definitions/", "#/definitions/");
+                        let schema: Value = serde_json::from_str(&text)?;
                         let id = schema.get("$id").cloned();
                         if let Some(Value::String(id)) = id {
                             schemas.insert(id, schema);

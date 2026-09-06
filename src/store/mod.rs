@@ -47,3 +47,5 @@ pub(crate) trait Store: Send + Sync + 'static {
 }
 
 pub(crate) mod file_store;
+
+pub(crate) mod credential_store;
