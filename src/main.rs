@@ -19,9 +19,11 @@ mod model;
 mod auth;
 mod catalog;
 mod connector;
+mod dcp;
 mod negotiation;
 mod policy_engine;
 mod reverse_proxy;
+mod shared;
 mod store;
 mod transfer;
 
