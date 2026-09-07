@@ -75,10 +75,7 @@ badge → `401`.
 ## Getting a credential
 
 Before any of the above works, a connector must actually **hold** a credential.
-
-The normal source is an external OID4VCI issuer (below). The connector can also issue
-credentials over DCP — to itself or a peer — but that is **off by default**
-(`dcp.issuer_enabled`), since with an external issuer those routes are unused:
+Two native paths exist today, both DCP:
 
 ```sh
 # holder-initiated: ask an issuer for a credential

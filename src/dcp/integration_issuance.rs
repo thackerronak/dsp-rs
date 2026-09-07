@@ -45,7 +45,7 @@ async fn test_issuance_and_delivery_integration() {
         resolver.clone(),
         credential_store.clone(),
     );
-    let holder_app = Router::new().nest("/api/credentials/v1", holder::router(holder_state, true));
+    let holder_app = Router::new().nest("/api/credentials/v1", holder::router(holder_state));
     let holder_server = TestServer::spawn(holder_app).await;
     let holder_endpoint = holder_server.url("/api/credentials/v1");
 

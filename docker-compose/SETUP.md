@@ -55,35 +55,13 @@ default credentials:
 }
 ```
 
-To use the **native** DCP issuance path (step 4 below), you must also turn it on. It
-is off by default, because with an external issuer those routes are unused and two of
-them are unauthenticated triggers:
-
-```json
-"dcp": {
-  "issuer_enabled": true,
-  "sts_client_id": "dsp-client",
-  "sts_client_secret": "dsp-secret"
-}
-```
-
-With it off, `/api/issuance/v1/*`, `POST /api/credentials/v1/request`,
-`/offers` and credential push are simply not mounted. Listing credentials and
-answering presentation queries always are — the wallet still does its job.
-
 Other `dcp` keys (`credential_store_path`, `credential_service_path`,
 `issuance_service_path`) have sensible defaults. Restart after editing.
 
 ## 4. Seed a credential
 
-Each party needs a credential in its store before it can prove anything.
-
-The intended source is the external walt.id issuer ([below](#from-an-external-waltid-issuer)).
-The commands here use the **native** path instead, where each connector issues to the
-other — useful while the walt.id path is not yet wired up. It needs
-`"issuer_enabled": true` from step 3.
-
-Ask party B's holder to request a credential from party A's issuer:
+Each party needs a credential in its store before it can prove anything. Ask party
+B's holder to request one from party A's issuer:
 
 ```sh
 curl -X POST http://localhost:23000/api/credentials/v1/request \

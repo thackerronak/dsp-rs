@@ -55,9 +55,6 @@ pub(crate) struct WalletConfig {
     pub(crate) issuer_url: String,
     /// `Some((client_id, client_secret))` mounts the STS; `None` leaves it off.
     pub(crate) sts_credentials: Option<(String, String)>,
-    /// Mount the native DCP issuance paths (self-issued credentials). Off when an
-    /// external OID4VCI issuer is the credential source.
-    pub(crate) dcp_issuance: bool,
 }
 
 /// The connector's identity: a native DCP wallet (holder + verifier, plus a retained
@@ -79,7 +76,6 @@ pub(crate) struct Authenticator {
     /// `None` when no STS credentials are configured — the endpoint is then not mounted.
     sts: Option<StsState>,
     oid4vci: Oid4vciState,
-    dcp_issuance: bool,
     credential_service_path: String,
     issuance_service_path: String,
 }
@@ -148,7 +144,6 @@ impl Authenticator {
             issuer,
             sts,
             oid4vci,
-            dcp_issuance: config.dcp_issuance,
             credential_service_path: config.credential_service_path,
             issuance_service_path: config.issuance_service_path,
         }
@@ -254,17 +249,15 @@ impl Authenticator {
     /// STS sits under `/api-internal` because nothing in the protocol calls it — it is a
     /// local token-minting affordance, not a peer-facing endpoint.
     fn service_routes(&self) -> Router {
-        let mut router = Router::new().nest(
-            &self.credential_service_path,
-            holder::router(self.holder.clone(), self.dcp_issuance),
-        );
-
-        if self.dcp_issuance {
-            router = router.nest(
+        let mut router = Router::new()
+            .nest(
+                &self.credential_service_path,
+                holder::router(self.holder.clone()),
+            )
+            .nest(
                 &self.issuance_service_path,
                 issuer::router(self.issuer.clone()),
             );
-        }
 
         if let Some(sts) = &self.sts {
             router = router.nest("/api-internal/sts", sts::router(sts.clone()));
@@ -305,7 +298,6 @@ impl Authenticator {
             issuance_service_path: "/api/issuance/v1".to_string(),
             issuer_url: String::new(),
             sts_credentials: None,
-            dcp_issuance: true,
         })
     }
 
