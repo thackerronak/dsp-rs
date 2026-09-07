@@ -3,20 +3,20 @@
 ## Dataspace Protocol (DSP 2025-1) end-to-end flow
 
 The diagram below is generated on the fly by the PlantUML server from
-[`dsp-protocol-sequence.puml`](dsp-protocol-sequence.puml) on the `docs` branch —
+[`dsp-protocol-sequence.puml`](dsp-protocol-sequence.puml) on the `feat_new_dcp` branch —
 no local tooling needed. It mirrors the demo in
 [`docker-compose/USAGE.md`](../../docker-compose/USAGE.md).
 
 > New to these endpoints? Read the step-by-step, example-driven guide starting at
 > the [docs index](../README.md).
 
-![DSP 2025-1 sequence diagram (PlantUML)](https://www.plantuml.com/plantuml/proxy?cache=no&fmt=svg&src=https://raw.githubusercontent.com/thackerronak/dsp-rs/docs/docs/diagrams/dsp-protocol-sequence.puml)
+![DSP 2025-1 sequence diagram (PlantUML)](https://www.plantuml.com/plantuml/proxy?cache=no&fmt=svg&src=https://raw.githubusercontent.com/thackerronak/dsp-rs/feat_new_dcp/docs/diagrams/dsp-protocol-sequence.puml)
 
-- **Live link (SVG):** <https://www.plantuml.com/plantuml/proxy?cache=no&fmt=svg&src=https://raw.githubusercontent.com/thackerronak/dsp-rs/docs/docs/diagrams/dsp-protocol-sequence.puml>
-- **Live link (PNG):** <https://www.plantuml.com/plantuml/proxy?cache=no&fmt=png&src=https://raw.githubusercontent.com/thackerronak/dsp-rs/docs/docs/diagrams/dsp-protocol-sequence.puml>
+- **Live link (SVG):** <https://www.plantuml.com/plantuml/proxy?cache=no&fmt=svg&src=https://raw.githubusercontent.com/thackerronak/dsp-rs/feat_new_dcp/docs/diagrams/dsp-protocol-sequence.puml>
+- **Live link (PNG):** <https://www.plantuml.com/plantuml/proxy?cache=no&fmt=png&src=https://raw.githubusercontent.com/thackerronak/dsp-rs/feat_new_dcp/docs/diagrams/dsp-protocol-sequence.puml>
 
 > The `proxy?src=<raw URL>` form makes `plantuml.com` fetch and render the file
-> itself. It reads the raw file from the `docs` branch — change the branch segment
+> itself. It reads the raw file from the `feat_new_dcp` branch — change the branch segment
 > in the URL (`.../dsp-rs/<branch>/docs/diagrams/...`) to render another branch.
 
 ### Flow summary
@@ -26,11 +26,14 @@ no local tooling needed. It mirrors the demo in
   the catalog is assembled per request (see `src/catalog/`).
 - **Step 0 — Catalog discovery**: `POST /api/2025/1/catalog/request` returns the
   provider's `dcat:Catalog` (see `src/catalog/mod.rs`).
-- **Step 1 — Self-issued token acquisition**: the DCP handshake
-  (`/auth/verify_me` → OpenID4VP presentation via the wallet → poll
-  `/auth/status/{session_id}`) yields the ES256 Bearer token that protects every
-  DSP call. Incoming tokens are verified by resolving the caller's
-  `did:web` document at `/.well-known/did.json` (see `src/auth/`).
+- **Step 1 — Access token acquisition**: a native DCP exchange in **one round
+  trip**. The requester signs a Self-Issued ID Token and POSTs it to the peer's
+  `/auth/token`; the peer validates it, resolves the requester's
+  `CredentialService` from its DID document, pulls a JWT-VP
+  (`/api/credentials/v1/presentations/query`), validates the VP and the VC inside
+  it against `allowed_issuers`, and returns the ES256 Bearer token that protects
+  every DSP call. Each connector is its own holder and verifier — no external
+  wallet or verifier service, no session, no polling (see `src/auth/`, `src/dcp/`).
 - **Step 2 — Contract negotiation**: asynchronous, callback-based state machine
   (`REQUESTED → OFFERED/ACCEPTED → AGREED → VERIFIED → FINALIZED`) over
   `/api/2025/1/negotiations/*` (see `src/negotiation/`).

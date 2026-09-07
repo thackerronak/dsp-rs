@@ -5,7 +5,7 @@ _Part of the [DSP guide](README.md) · Reference_
 | Term | Meaning |
 |------|---------|
 | **DSP** | *Dataspace Protocol* — the standard this connector implements (version 2025-1) for catalog, contract negotiation, and transfer between connectors. |
-| **DCP** | *Decentralized Claims Protocol* — the identity/credential protocol used to *obtain* credentials and present them (the `/auth/*` handshake). DSP uses the resulting tokens. |
+| **DCP** | *Decentralized Claims Protocol* — the identity/credential protocol used to *obtain* credentials and present them. Implemented natively here (`src/dcp/`); DSP uses the resulting tokens. |
 | **Connector** | A participant's automated "trade desk" that speaks DSP. Every connector is both producer and consumer. |
 | **Producer / Provider** | The party offering data (the seller). |
 | **Consumer** | The party requesting data (the buyer). |
@@ -15,9 +15,12 @@ _Part of the [DSP guide](README.md) · Reference_
 | **VC** | *Verifiable Credential* — a signed claim about a party (e.g. identity, membership, BPN), issued by a trusted Issuer and held in a wallet. |
 | **VP** | *Verifiable Presentation* — a package of one or more VCs a party presents to prove something, without revealing more than needed. |
 | **Issuer** | The trusted authority that signs VCs (the trust anchor). In Catena-X, the central Issuer operated by the network's Operating Company. |
-| **Verifier** | The component that checks a presented VP is genuine (behind `/auth/verify_me`). |
-| **Wallet** | Where a party stores its VCs and creates VPs (walt.id in the demo). |
-| **OpenID4VP** | *OpenID for Verifiable Presentations* — the protocol used to request/deliver a VP during `verify_me`. |
+| **Verifier** | The component that checks a presented VP is genuine. Built into every connector (`src/dcp/verifier.rs`, behind `POST /auth/token`). |
+| **Wallet** | Where a party stores its VCs and creates VPs. Built into every connector: the credential store (`src/dcp/store.rs`) plus the Credential Service (`src/dcp/holder.rs`). |
+| **Credential Service** | The holder-side DCP endpoint a verifier pulls presentations from (`/api/credentials/v1`), advertised in the DID document under `service[]`. |
+| **Issuer Service** | The issuer-side DCP endpoint a holder requests credentials from (`/api/issuance/v1`), also advertised under `service[]`. |
+| **SI token** | *Self-Issued ID Token* — a short-lived ES256 JWT a party signs about itself (`iss` = `sub`, `aud` = the peer, unique `jti`) to authenticate a DCP call. Not the DSP access token. |
+| **STS** | *Secure Token Service* — mints SI tokens on request (`/api-internal/sts/token`). Opt-in and off the protocol path; the connector mints its own tokens in process. |
 | **ES256** | The ECDSA-with-P-256 signature algorithm used to sign the access/transfer JWTs. |
 | **ODRL** | *Open Digital Rights Language* — how usage **policies** are expressed (permissions, constraints like "spatial isPartOf EU"). |
 | **DCAT** | *Data Catalog Vocabulary* — how the **catalog** is expressed (`dcat:Catalog`, `dcat:dataset`, `dcat:distribution`). |

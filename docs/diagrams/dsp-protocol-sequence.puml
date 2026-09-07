@@ -8,7 +8,6 @@ skinparam NoteBorderColor #D4AC0D
 
 actor "Data Consumer\n(internal API caller)" as User
 participant "Consumer Connector\n(did:web:party-b-connector%3A3000)\nhttp://party-b-connector:3000" as Consumer
-participant "Consumer Wallet\n(SSI / OpenID4VP)" as Wallet
 participant "Provider Connector\n(did:web:party-a-connector%3A3000)\nhttp://party-a-connector:3000" as Provider
 actor "Provider Operator\n(data owner / admin)" as ProviderOp
 
@@ -51,7 +50,7 @@ end note
 
 == STEP 0: Catalog Discovery (optional sync) ==
 
-Consumer -> Provider: POST /api/2025/1/catalog/request\n[Authorization: Bearer <si_token>]\n[Content-Type: application/json]
+Consumer -> Provider: POST /api/2025/1/catalog/request\n[Authorization: Bearer <access_token>]\n[Content-Type: application/json]
 note left #FEF9E7
   **CatalogRequestMessage**
   {
@@ -77,35 +76,45 @@ note right #EBF5FB
   }
 end note
 
-== STEP 1: Self-Issued Token Acquisition (DCP handshake) ==
+== STEP 1: Access Token Acquisition (native DCP, synchronous pull) ==
 
 note over Consumer, Provider #FDEDEC
-  Performed on demand before each protected DSP call and cached
-  until expiry (Authenticator::get_token). The presented token is
-  an **ES256** JWT backed by a Verifiable Presentation.
+  Performed on demand before each protected DSP call
+  (Authenticator::get_token). Each connector is its own holder
+  and verifier behind one did:web — there is no external wallet
+  or verifier service. One round trip: no session, no polling.
 end note
 
-Consumer -> Provider: POST /auth/verify_me\n{ "did_web": "did:web:party-b-connector%3A3000" }
-Provider --> Consumer: HTTP 200 OK\n**Session** { session_id, openid4vp_url }
+Consumer -> Consumer: build_si_token()\nES256 JWT, iss = sub = Consumer DID,\naud = Provider DID, fresh jti
+Consumer -> Provider: POST /auth/token\n[Authorization: Bearer <si_token>]
+activate Provider
 
-Consumer -> Wallet: POST /wallet/{id}/credentials/present\n{ "request_url": "<openid4vp_url>" }
-Wallet --> Provider: OpenID4VP — submit Verifiable Presentation
-Wallet --> Consumer: HTTP 200 OK
+Provider -> Consumer: GET /.well-known/did.json
+Consumer --> Provider: DID document\n(public key + CredentialService endpoint)
+Provider -> Provider: validate SI token\n(signature, aud, exp, jti replay)
 
-loop Poll until status == valid (max ~10s, every 3s)
-    Consumer -> Provider: GET /auth/status/{session_id}
-    Provider --> Consumer: HTTP 200 OK\n**Status** (pending | valid + <access_token>)
-end
+note over Provider #EBF5FB
+  The **verifier** now pulls the presentation from the
+  requester's Credential Service — the reverse of the
+  usual direction.
+end note
+
+Provider -> Consumer: POST /api/credentials/v1/presentations/query\n[Bearer <provider si_token>]\nscope: org.eclipse.dspace.dcp.vc.type:identity_credential
+Consumer --> Provider: **PresentationResponseMessage**\n{ presentation: [ <JWT-VP> ] }
+
+Provider -> Provider: validate VP (signed by Consumer, aud = Provider)\nvalidate VC (issuer in allowed_issuers)\nderive_access_token()
+Provider --> Consumer: HTTP 200 OK\n{ access_token, token_type: "Bearer", expires_in }
+deactivate Provider
 
 note over Consumer #EAFAF1
-  Consumer now holds a Bearer <si_token> for the Provider.
+  Consumer now holds a Bearer <access_token> for the Provider.
   (The reverse also happens: when the Provider calls back, it
-  first fetches its own token from the Consumer's /auth/verify_me.)
+  runs the same exchange against the Consumer's /auth/token.)
 end note
 
 == STEP 2: Contract Negotiation (async, callback-based) ==
 
-Consumer -> Provider: POST /api/2025/1/negotiations/request\n[Authorization: Bearer <si_token>]
+Consumer -> Provider: POST /api/2025/1/negotiations/request\n[Authorization: Bearer <access_token>]
 note left #FEF9E7
   **ContractRequestMessage**
   {
@@ -121,7 +130,7 @@ note left #FEF9E7
   }
 end note
 
-Provider -> Consumer: GET /.well-known/did.json\n(resolve consumer did:web & verify ES256 si_token signature)
+Provider -> Consumer: GET /.well-known/did.json\n(resolve consumer did:web & verify ES256 access_token signature)
 Consumer --> Provider: HTTP 200 OK (Consumer DID Document)
 
 Provider --> Consumer: HTTP 201 Created
@@ -136,7 +145,7 @@ note right #EBF5FB
 end note
 
 alt Provider offers a (counter) ContractOffer first
-    Provider -> Consumer: POST /api/2025/1/negotiations/{consumer_pid}/offers\n[Authorization: Bearer <provider_si_token>]
+    Provider -> Consumer: POST /api/2025/1/negotiations/{consumer_pid}/offers\n[Authorization: Bearer <provider access_token>]
     note left #FEF9E7
       **ContractOfferMessage**
       { "@type": "ContractOfferMessage",
@@ -154,7 +163,7 @@ end
 
 == STEP 2b: Agreement & Verification ==
 
-Provider -> Consumer: POST /api/2025/1/negotiations/{consumer_pid}/agreement\n[Authorization: Bearer <provider_si_token>]
+Provider -> Consumer: POST /api/2025/1/negotiations/{consumer_pid}/agreement\n[Authorization: Bearer <provider access_token>]
 note left #EAFAF1
   **ContractAgreementMessage**
   {
@@ -173,7 +182,7 @@ note left #EAFAF1
 end note
 Consumer --> Provider: HTTP 200 OK (state = AGREED)
 
-Consumer -> Provider: POST /api/2025/1/negotiations/{provider_pid}/agreement/verification\n[Authorization: Bearer <si_token>]
+Consumer -> Provider: POST /api/2025/1/negotiations/{provider_pid}/agreement/verification\n[Authorization: Bearer <access_token>]
 note right #FEF9E7
   **ContractAgreementVerificationMessage**
   { "@type": "ContractAgreementVerificationMessage",
@@ -181,7 +190,7 @@ note right #FEF9E7
 end note
 Provider --> Consumer: HTTP 200 OK (state = VERIFIED)
 
-Provider -> Consumer: POST /api/2025/1/negotiations/{consumer_pid}/events\n[Authorization: Bearer <provider_si_token>]
+Provider -> Consumer: POST /api/2025/1/negotiations/{consumer_pid}/events\n[Authorization: Bearer <provider access_token>]
 note left #EBF5FB
   **ContractNegotiationEventMessage**
   { "@type": "ContractNegotiationEventMessage",
@@ -198,7 +207,7 @@ end note
 
 == STEP 3: Transfer Process (async, callback-based) ==
 
-Consumer -> Provider: POST /api/2025/1/transfers/request\n[Authorization: Bearer <si_token>]
+Consumer -> Provider: POST /api/2025/1/transfers/request\n[Authorization: Bearer <access_token>]
 note left #FEF9E7
   **TransferRequestMessage**
   {
@@ -218,7 +227,7 @@ note right #EBF5FB
     "state": "REQUESTED" }
 end note
 
-Provider -> Consumer: POST /api/2025/1/transfers/{consumer_pid}/start\n[Authorization: Bearer <provider_si_token>]
+Provider -> Consumer: POST /api/2025/1/transfers/{consumer_pid}/start\n[Authorization: Bearer <provider access_token>]
 note left #EAFAF1
   **TransferStartMessage**
   {
@@ -246,7 +255,7 @@ opt Consumer pulls the data (HttpData-PULL)
     end note
 end
 
-Consumer -> Provider: POST /api/2025/1/transfers/{provider_pid}/completion\n[Authorization: Bearer <si_token>]
+Consumer -> Provider: POST /api/2025/1/transfers/{provider_pid}/completion\n[Authorization: Bearer <access_token>]
 note right #FEF9E7
   **TransferCompletionMessage**
   { "@type": "TransferCompletionMessage",

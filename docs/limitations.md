@@ -14,9 +14,20 @@ treat this as a "known gaps" list, not a criticism.
 
 | Item | Detail | Where |
 |------|--------|-------|
-| **HTTPS not enforced** | DID resolution passes `enforce_https = false`, and the demo runs over `http://`. Enforce HTTPS (and certificate validation) before production. | `src/auth/mod.rs` (`resolve_did_web(did_web, false)`) |
-| **Single verification key assumed** | The JWT `kid` header isn't used when selecting the DID's verification key — it assumes one key per DID. Multi-key DIDs / key rotation aren't handled. | `src/auth/mod.rs` |
-| **Credential types are hardcoded** | Only a fixed `identity_credential` is requested at `verify_me`; credentials can't yet be selected per-offer, so a policy can't demand a specific framework/use-case credential per dataset. | `src/auth/mod.rs` |
+| **HTTPS not enforced** | DID resolution passes `enforce_https = false`, and the demo runs over `http://`. Enforce HTTPS (and certificate validation) before production. | `src/dcp/resolver.rs` (`resolve_did_web(did, false)`) |
+| **Single verification key assumed** | The JWT `kid` header isn't used when selecting the DID's verification key — it assumes one key per DID. Multi-key DIDs / key rotation aren't handled. | `src/shared/did.rs` (`decoding_key_for`) |
+| **Credential type is hardcoded** | The verifier always asks for scope `…dcp.vc.type:identity_credential`; credentials can't yet be selected per-offer, so a policy can't demand a specific framework/use-case credential per dataset. | `src/dcp/verifier.rs` (`query_peer_presentation`) |
+| **Credential-acquisition triggers are unauthenticated** | `POST /api/credentials/v1/request` and `POST /api/issuance/v1/offer` take a JSON body and no SI token, unlike every other holder/issuer endpoint, yet sit on public paths. Anyone who can reach the connector can make it request credentials from an arbitrary DID (an outbound POST carrying a connector-signed SI token) or mint and push a credential to an arbitrary holder. Move them behind `/api-internal` or require an SI token. | `src/dcp/holder.rs` (`trigger_request`), `src/dcp/issuer.rs` (`trigger_offer`) |
+| **Replay protection is per-process** | The `jti` replay cache is an in-memory map. It prunes expired entries, so it does not grow without bound, but it is lost on restart and is not shared between replicas — so a replayed SI token would be accepted by a second instance. | `src/dcp/si_token.rs` (`ReplayCache`) |
+| **One key for several jobs** | The same ES256 key signs SI tokens, issued credentials, and DSP access tokens, and its public half is published in the DID document. Separate keys per role would limit the blast radius of a compromise. | `src/shared/key_pair.rs` |
+
+## Identity & credentials
+
+| Item | Detail | Where |
+|------|--------|-------|
+| **No external-issuer path yet** | The demo configs trust `did:web:issuer-did-server` (the walt.id issuer), but the connector cannot yet redeem a credential offer from it — the OID4VCI client is not implemented, so `issuer_url` is parsed and unused. Only the **native** DCP issuance path works today, and it requires the parties to list each other in `allowed_issuers`. | `src/auth/mod.rs`, `src/dcp/issuer.rs` |
+| **Credential delivery is async with no status** | `/request` and `/offer` return `202`; the credential arrives later via a push to the holder's `/credentials`. There is no way to ask whether a given request succeeded, so callers poll `GET /api/credentials/v1/credentials`. | `src/dcp/holder.rs` |
+| **Self-issuance is the default trust model** | Each connector is also an issuer. That is convenient for a demo but means trust is configuration (`allowed_issuers`), not architecture. A real dataspace puts a third party in the issuer role. | `src/dcp/issuer.rs` |
 
 ## Protocol coverage
 
