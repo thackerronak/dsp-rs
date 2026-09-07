@@ -67,16 +67,32 @@ impl HolderState {
     }
 }
 
-pub(crate) fn router(state: HolderState) -> Router {
-    Router::new()
-        .route(
-            "/credentials",
-            get(list_credentials).post(receive_credential),
-        )
-        .route("/offers", post(receive_offer))
-        .route("/request", post(trigger_request))
-        .route("/presentations/query", post(query_presentations))
-        .with_state(state)
+/// The holder's Credential Service.
+///
+/// `dcp_issuance` gates the routes that only matter when credentials are obtained
+/// over DCP: receiving a pushed credential, receiving an offer, and asking an issuer
+/// for one. With an external OID4VCI issuer those are unused, and leaving them
+/// mounted is surface for a feature that is not in play. Listing credentials and
+/// answering presentation queries are always available — they are how the wallet
+/// does its job regardless of where the credential came from.
+pub(crate) fn router(state: HolderState, dcp_issuance: bool) -> Router {
+    let credentials = if dcp_issuance {
+        get(list_credentials).post(receive_credential)
+    } else {
+        get(list_credentials)
+    };
+
+    let mut router = Router::new()
+        .route("/credentials", credentials)
+        .route("/presentations/query", post(query_presentations));
+
+    if dcp_issuance {
+        router = router
+            .route("/offers", post(receive_offer))
+            .route("/request", post(trigger_request));
+    }
+
+    router.with_state(state)
 }
 
 async fn authenticate(state: &HolderState, headers: &HeaderMap) -> Result<String, StatusCode> {
@@ -287,6 +303,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dcp_issuance_routes_are_gated_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = holder_state(dir.path());
+
+        // The DCP-issuance triggers must not exist when the flag is off.
+        for (method, uri) in [("POST", "/request"), ("POST", "/offers")] {
+            let request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap();
+
+            let response = router(state.clone(), false).oneshot(request).await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "{method} {uri} should not be mounted when DCP issuance is off"
+            );
+        }
+
+        // Neither should an issuer be able to push a credential at us.
+        let push = Request::builder()
+            .method("POST")
+            .uri("/credentials")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let response = router(state.clone(), false).oneshot(push).await.unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        // But the wallet still does its own job: listing and presenting.
+        let list = Request::builder()
+            .method("GET")
+            .uri("/credentials")
+            .body(Body::empty())
+            .unwrap();
+        let response = router(state.clone(), false).oneshot(list).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Present is reachable (unauthenticated here, so it rejects on the token).
+        let query = Request::builder()
+            .method("POST")
+            .uri("/presentations/query")
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let response = router(state, false).oneshot(query).await.unwrap();
+        assert_ne!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "presentation query must stay mounted"
+        );
+    }
+
+    #[tokio::test]
     async fn test_holder_routes_receive_and_list() {
         let dir = tempfile::tempdir().unwrap();
         let state = holder_state(dir.path());
@@ -315,7 +387,7 @@ mod tests {
             ))
             .unwrap();
 
-        let response = router(state.clone()).oneshot(deliver).await.unwrap();
+        let response = router(state.clone(), true).oneshot(deliver).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
         let list = Request::builder()
@@ -324,7 +396,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let response = router(state).oneshot(list).await.unwrap();
+        let response = router(state, true).oneshot(list).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
@@ -356,7 +428,7 @@ mod tests {
             ))
             .unwrap();
 
-        let response = router(state).oneshot(deliver).await.unwrap();
+        let response = router(state, true).oneshot(deliver).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -394,7 +466,7 @@ mod tests {
             ))
             .unwrap();
 
-        let response = router(state.clone()).oneshot(request).await.unwrap();
+        let response = router(state.clone(), true).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
@@ -430,7 +502,7 @@ mod tests {
             ))
             .unwrap();
 
-        let response = router(state.clone()).oneshot(request).await.unwrap();
+        let response = router(state.clone(), true).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
 
         // 3. Empty scope => 400 Bad Request
@@ -450,7 +522,7 @@ mod tests {
             ))
             .unwrap();
 
-        let response = router(state.clone()).oneshot(request).await.unwrap();
+        let response = router(state.clone(), true).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
         // 4. Missing token => 401 Unauthorized
@@ -468,7 +540,7 @@ mod tests {
             ))
             .unwrap();
 
-        let response = router(state).oneshot(request).await.unwrap();
+        let response = router(state, true).oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

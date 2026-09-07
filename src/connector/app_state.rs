@@ -82,6 +82,12 @@ struct DcpConfig {
     #[serde(default = "default_issuance_service_path")]
     issuance_service_path: String,
 
+    // Native DCP issuance — this connector issuing credentials to itself or a peer.
+    // Off by default: with an external issuer these routes are unused, and two of
+    // them are unauthenticated triggers. Turn on only for self-issued credentials.
+    #[serde(default)]
+    issuer_enabled: bool,
+
     // STS is mounted only when both are configured. There are deliberately no defaults:
     // a connector should not ship with well-known token-minting credentials.
     #[serde(default)]
@@ -97,6 +103,7 @@ impl Default for DcpConfig {
             credential_store_path: default_credential_store_path(),
             credential_service_path: default_credential_service_path(),
             issuance_service_path: default_issuance_service_path(),
+            issuer_enabled: false,
             sts_client_id: None,
             sts_client_secret: None,
         }
@@ -179,6 +186,7 @@ impl<T: Store> AppState<T> {
             issuance_service_path: config.dcp.issuance_service_path,
             issuer_url: config.issuer_url,
             sts_credentials,
+            dcp_issuance: config.dcp.issuer_enabled,
         });
 
         let validator = SchemaValidator::new().await?;
