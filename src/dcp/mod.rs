@@ -4,6 +4,7 @@ use axum::http::{HeaderMap, header::AUTHORIZATION};
 pub(crate) mod holder;
 pub(crate) mod issuer;
 pub(crate) mod model;
+pub(crate) mod oid4vci;
 pub(crate) mod resolver;
 pub(crate) mod scope;
 pub(crate) mod si_token;

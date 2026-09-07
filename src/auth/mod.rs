@@ -18,6 +18,7 @@ use crate::{
     dcp::{
         holder::{self, HolderState},
         issuer::{self, IssuerState},
+        oid4vci::{self, Oid4vciState},
         si_token::{DidResolver, ReplayCache, build_si_token},
         store::CredentialStore,
         sts::{self, StsState},
@@ -74,20 +75,22 @@ pub(crate) struct Authenticator {
     issuer: IssuerState,
     /// `None` when no STS credentials are configured — the endpoint is then not mounted.
     sts: Option<StsState>,
-    issuer_url: String,
+    oid4vci: Oid4vciState,
     credential_service_path: String,
     issuance_service_path: String,
 }
 
 impl Authenticator {
     pub(crate) fn new(config: WalletConfig) -> Self {
+        let store = config.store;
+
         let holder = HolderState::new(
             config.key_pair.clone(),
             config.local_did.clone(),
             config.kid.clone(),
             config.client.clone(),
             config.resolver.clone(),
-            config.store,
+            store.clone(),
         );
 
         let issuer = IssuerState::new(
@@ -110,6 +113,15 @@ impl Authenticator {
                 )
             });
 
+        let oid4vci = Oid4vciState::new(
+            config.key_pair.clone(),
+            config.local_did.clone(),
+            config.kid.clone(),
+            config.client.clone(),
+            store,
+            config.issuer_url,
+        );
+
         let base = config.base_address.trim_end_matches('/');
         let local_did_document = build_local_did_document(
             &config.local_did,
@@ -131,7 +143,7 @@ impl Authenticator {
             holder,
             issuer,
             sts,
-            issuer_url: config.issuer_url,
+            oid4vci,
             credential_service_path: config.credential_service_path,
             issuance_service_path: config.issuance_service_path,
         }
@@ -251,7 +263,10 @@ impl Authenticator {
             router = router.nest("/api-internal/sts", sts::router(sts.clone()));
         }
 
-        router
+        router.nest(
+            "/api-internal/credentials",
+            oid4vci::router(self.oid4vci.clone()),
+        )
     }
 }
 

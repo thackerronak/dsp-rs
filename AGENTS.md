@@ -70,6 +70,7 @@ src/
 │   ├── verifier.rs    # presentation pull + VP/VC validation
 │   ├── scope.rs       # scope grammar + JWT-VP minting
 │   ├── sts.rs         # Secure Token Service (opt-in, /api-internal/sts)
+│   ├── oid4vci.rs     # redeem a credential offer from an external issuer
 │   ├── resolver.rs    # did:web over HTTP
 │   ├── store.rs       # credential store (0600 files)
 │   └── model.rs       # DCP message serde

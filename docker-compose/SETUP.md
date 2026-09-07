@@ -84,6 +84,32 @@ curl -X POST http://localhost:13000/api/credentials/v1/request \
   -d '{"issuerDid":"did:web:party-b-connector%3A3000"}'
 ```
 
+### From an external (walt.id) issuer
+
+If you would rather have a real third party issue the credential, the connector can
+redeem an OID4VCI offer itself:
+
+```sh
+# 1. ask the walt.id issuer for a pre-authorized offer
+OFFER=$(curl -s -X POST 'http://localhost:7002/issuer2/credential-offers' \
+  -H 'content-type: application/json' \
+  -d '{"profileId":"identityCredentialJwtVc","authMethod":"PRE_AUTHORIZED"}' | jq -r '.credentialOffer')
+
+# 2. hand it to the connector, which runs the flow and stores the credential
+curl -s -X POST http://localhost:23000/api-internal/credentials/redeem \
+  -H 'content-type: application/json' \
+  -d "{\"offerUrl\":\"$OFFER\"}" | jq
+```
+
+The connector signs the OID4VCI holder proof with its own key — unlike the previous
+setup, no private key is copied into an external wallet.
+
+> **Not runnable yet:** the bundled issuer config only advertises a `dc+sd-jwt`
+> credential, which this connector's verifier cannot read. Add a `jwt_vc_json`
+> credential configuration and matching profile under `docker-compose/issuer/config/`
+> first. With `allowed_issuers` set to `["did:web:issuer-did-server"]`, this becomes
+> the primary path and the DCP issuance above becomes the self-issued fallback.
+
 An issuer can also push an offer instead, which triggers the same exchange:
 
 ```sh

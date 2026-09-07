@@ -45,6 +45,22 @@ impl KeyPair {
         encode(&header, &claims, &self.encoding_key).map_err(anyhow::Error::msg)
     }
 
+    /// Sign with a caller-supplied header.
+    ///
+    /// Needed where the `typ` matters — an OID4VCI proof JWT must carry
+    /// `typ: "openid4vci-proof+jwt"`, not the default `JWT`.
+    pub(crate) fn encode_with_header<T: Serialize>(
+        &self,
+        claims: T,
+        kid: String,
+        typ: &str,
+    ) -> anyhow::Result<String> {
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some(kid);
+        header.typ = Some(typ.to_string());
+        encode(&header, &claims, &self.encoding_key).map_err(anyhow::Error::msg)
+    }
+
     pub(crate) fn decode<T>(&self, token: &str) -> anyhow::Result<T>
     where
         T: for<'de> Deserialize<'de>,

@@ -89,7 +89,21 @@ curl -X POST http://localhost:13000/api/issuance/v1/offer \
   -d '{"holderDid":"did:web:party-b-connector%3A3000"}'
 ```
 
-Both return `202` — delivery is an **asynchronous push**: the issuer mints the
+An external issuer that speaks **OID4VCI** is redeemed instead — the connector runs
+the pre-authorized code flow itself, signing the holder proof with its own key so the
+private key never leaves it:
+
+```sh
+curl -X POST http://localhost:23000/api-internal/credentials/redeem \
+  -H 'content-type: application/json' \
+  -d '{"offerUrl":"openid-credential-offer://?credential_offer=..."}'
+```
+
+Unlike the DCP paths this one is **synchronous** — it returns the stored credential's
+id and issuer, or an error. An offer naming an issuer other than the configured
+`issuer_url` is refused.
+
+The two DCP calls above return `202` — their delivery is an **asynchronous push**: the issuer mints the
 credential and POSTs it to the holder's `/api/credentials/v1/credentials`. Poll
 `GET /api/credentials/v1/credentials` until it lands.
 

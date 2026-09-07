@@ -25,7 +25,8 @@ treat this as a "known gaps" list, not a criticism.
 
 | Item | Detail | Where |
 |------|--------|-------|
-| **No external-issuer path yet** | The demo configs trust `did:web:issuer-did-server` (the walt.id issuer), but the connector cannot yet redeem a credential offer from it — the OID4VCI client is not implemented, so `issuer_url` is parsed and unused. Only the **native** DCP issuance path works today, and it requires the parties to list each other in `allowed_issuers`. | `src/auth/mod.rs`, `src/dcp/issuer.rs` |
+| **External issuance not yet exercised against a live issuer** | The OID4VCI redeem client is implemented and tested against a mock issuer, but the demo's walt.id issuer only advertises a `dc+sd-jwt` credential configuration, while the verifier reads plain JWT-VC. Add a `jwt_vc_json` configuration to `docker-compose/issuer/config/` before the walt.id path works end to end. | `src/dcp/oid4vci.rs`, `docker-compose/issuer/config/` |
+| **SD-JWT credentials unsupported** | `validate_vc` reads a W3C JWT-VC (`vc.credentialSubject`). An IETF SD-JWT VC — disclosures, `_sd` digests, `cnf` key binding — is neither verified nor presented. | `src/dcp/verifier.rs` |
 | **Credential delivery is async with no status** | `/request` and `/offer` return `202`; the credential arrives later via a push to the holder's `/credentials`. There is no way to ask whether a given request succeeded, so callers poll `GET /api/credentials/v1/credentials`. | `src/dcp/holder.rs` |
 | **Self-issuance is the default trust model** | Each connector is also an issuer. That is convenient for a demo but means trust is configuration (`allowed_issuers`), not architecture. A real dataspace puts a third party in the issuer role. | `src/dcp/issuer.rs` |
 
