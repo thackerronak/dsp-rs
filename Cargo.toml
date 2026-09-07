@@ -36,6 +36,11 @@ tck = []
 echo = ["dep:base64"]
 keygen = ["dep:base64", "dep:p256", "dep:rand"]
 
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
+tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread"] }
+
 [[bin]]
 name = "keygen"
 path = "src/tools/keygen.rs"
