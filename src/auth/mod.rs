@@ -1,108 +1,143 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, sync::Arc};
 
-use anyhow::Context;
 use axum::{
     Json, Router,
-    extract::{Path, State},
-    http::StatusCode,
+    extract::State,
     response::IntoResponse,
-    routing::{get, post},
+    routing::post,
 };
-
-use jsonwebtoken::{Algorithm, Validation, dangerous::insecure_decode, decode};
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, error, warn};
+use tracing::debug;
 
 use crate::{
     AppError,
-    auth::{
-        extractor::AuthClaims,
-        model::{
-            CoreFlow, Credential, CredentialData, CredentialMeta, CredentialType, DcqlQuery, Did,
-            DidDocument, PresentationRequest, Session, Status, StatusResponse, VerificationRequest,
-            VerificationResult, VerificationState, VerifyMeRequest,
-        },
+    auth::{extractor::AuthClaims, model::CredentialData},
+    connector::app_state::{AppState, AppStateAuthentication},
+    dcp::{
+        holder::{self, HolderState},
+        issuer::{self, IssuerState},
+        si_token::{DidResolver, ReplayCache, build_si_token},
+        store::CredentialStore,
+        sts::{self, StsState},
     },
-    connector::{
-        app_state::{AppState, AppStateAuthentication, KeyPair},
-        utils::resolve_did_web,
-    },
+    shared::KeyPair,
     store::Store,
 };
 
 pub(crate) mod extractor;
-mod model;
+pub(crate) mod model;
+mod token;
 
-type TokenCache = RwLock<HashMap<String, Arc<Mutex<TokenState>>>>;
-type Sessions = Mutex<HashMap<String, String>>;
+#[cfg(all(test, not(feature = "tck")))]
+mod tests;
 
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
+}
+
+/// Everything needed to stand up the connector's DCP wallet.
+pub(crate) struct WalletConfig {
+    pub(crate) key_pair: KeyPair,
+    pub(crate) local_did: String,
+    pub(crate) kid: String,
+    pub(crate) allowed_issuers: Vec<String>,
+    pub(crate) resolver: Arc<dyn DidResolver>,
+    pub(crate) client: Client,
+    pub(crate) store: Arc<dyn CredentialStore>,
+    pub(crate) base_address: String,
+    pub(crate) credential_service_path: String,
+    pub(crate) issuance_service_path: String,
+    /// walt.id issuer base URL, used to redeem credential offers over OID4VCI.
+    pub(crate) issuer_url: String,
+    /// `Some((client_id, client_secret))` mounts the STS; `None` leaves it off.
+    pub(crate) sts_credentials: Option<(String, String)>,
+}
+
+/// The connector's identity: a native DCP wallet (holder + verifier, plus a retained
+/// self-issuance path) behind one `did:web`.
+///
+/// Concrete on purpose — there is a single implementation, so there is no backend trait
+/// and no downcast in the request path.
 pub(crate) struct Authenticator {
-    issuer_url: String,
-    verifier_url: String,
-    wallet_url: String,
-    wallet_id: String,
-    allowed_issuers: Vec<String>,
-
     key_pair: KeyPair,
-
-    cache: TokenCache,
-    sessions: Sessions,
+    local_did: String,
+    kid: String,
+    allowed_issuers: Vec<String>,
+    resolver: Arc<dyn DidResolver>,
+    replay: ReplayCache,
+    client: Client,
+    local_did_document: Value,
+    holder: HolderState,
+    issuer: IssuerState,
+    /// `None` when no STS credentials are configured — the endpoint is then not mounted.
+    sts: Option<StsState>,
+    issuer_url: String,
+    credential_service_path: String,
+    issuance_service_path: String,
 }
 
 impl Authenticator {
-    pub(crate) fn new(
-        issuer_url: String,
-        verifier_url: String,
-        wallet_url: String,
-        wallet_id: String,
-        allowed_issuers: Vec<String>,
-        key_pair: KeyPair,
-    ) -> Self {
+    pub(crate) fn new(config: WalletConfig) -> Self {
+        let holder = HolderState::new(
+            config.key_pair.clone(),
+            config.local_did.clone(),
+            config.kid.clone(),
+            config.client.clone(),
+            config.resolver.clone(),
+            config.store,
+        );
+
+        let issuer = IssuerState::new(
+            config.key_pair.clone(),
+            config.local_did.clone(),
+            config.kid.clone(),
+            config.client.clone(),
+            config.resolver.clone(),
+        );
+
+        let sts = config
+            .sts_credentials
+            .map(|(client_id, client_secret)| {
+                StsState::new(
+                    config.key_pair.clone(),
+                    config.local_did.clone(),
+                    config.kid.clone(),
+                    client_id,
+                    client_secret,
+                )
+            });
+
+        let base = config.base_address.trim_end_matches('/');
+        let local_did_document = build_local_did_document(
+            &config.local_did,
+            &config.kid,
+            serde_json::to_value(config.key_pair.public_jwk()).unwrap_or(Value::Null),
+            &format!("{base}{}", config.credential_service_path),
+            &format!("{base}{}", config.issuance_service_path),
+        );
+
         Self {
-            issuer_url,
-            verifier_url,
-            wallet_url,
-            wallet_id,
-            allowed_issuers,
-            key_pair,
-            cache: Default::default(),
-            sessions: Default::default(),
+            key_pair: config.key_pair,
+            local_did: config.local_did,
+            kid: config.kid,
+            allowed_issuers: config.allowed_issuers,
+            resolver: config.resolver,
+            replay: ReplayCache::new(),
+            client: config.client,
+            local_did_document,
+            holder,
+            issuer,
+            sts,
+            issuer_url: config.issuer_url,
+            credential_service_path: config.credential_service_path,
+            issuance_service_path: config.issuance_service_path,
         }
     }
 
-    async fn did(&self, client: &Client, did: &str) -> anyhow::Result<Value> {
-        let result: Did = client
-            .get(format!(
-                "{}/wallet/{}/dids/{}",
-                self.wallet_url,
-                self.wallet_id,
-                utf8_percent_encode(did, NON_ALPHANUMERIC),
-            ))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        anyhow::ensure!(
-            result.did == did,
-            "DID mismatch: expected {}, got {}",
-            did,
-            result.did
-        );
-
-        Ok(result.document)
-    }
-
-    // TODO: provide offer ID in order to match correct credentials on the provider side
+    /// Obtain a DSP access token from `remote_address` by presenting a Self-Issued ID Token.
     pub(crate) async fn get_token(
         &self,
         #[cfg_attr(feature = "tck", allow(unused))] client: &Client,
@@ -113,249 +148,43 @@ impl Authenticator {
         return Ok("".to_string());
 
         #[cfg_attr(feature = "tck", allow(unreachable_code))]
-        let token_mutex = {
-            let mut cache_guard = self.cache.write().await;
-            cache_guard
-                .entry(remote_address.to_string())
-                .or_insert_with(|| Arc::new(Mutex::new(TokenState::default())))
-                .clone()
+        let target_did = if did_web.is_empty() || did_web == self.local_did {
+            crate::shared::derive_did_web(remote_address)?
+        } else {
+            did_web
         };
 
-        let mut token_guard = token_mutex.lock().await;
-        match &mut *token_guard {
-            TokenState::Fetched((token, claims)) => {
-                if !claims.is_expired() {
-                    return Ok(token.clone());
-                }
+        let si_token = build_si_token(
+            &self.key_pair,
+            self.local_did.clone(),
+            target_did,
+            self.kid.clone(),
+            None,
+        )?;
 
-                // reset state
-                *token_guard = TokenState::default();
-            }
-            TokenState::Fetching(backoff) => {
-                if !backoff.should_retry() {
-                    anyhow::bail!("Too many requests");
-                }
-            }
-        }
-
-        debug!("Trying to get token for remote address '{remote_address}' ...");
-        let new_token = self.do_get_token(client, remote_address, did_web).await?;
-        let claims = insecure_decode::<AuthClaims>(&new_token)?.claims;
-        let iss_did_web = claims
-            .issuer()
-            .context("Token does not contain an issuer claim")?;
-
-        // TODO: determine `kid` from header and pass it to `get_public_key_from_did`
-        let decoding_key = self
-            .load_verify_did(client, iss_did_web)
-            .await
-            .context(format!("Failed to load DID for {iss_did_web}"))?
-            .decoding_key()
-            .context(format!(
-                "Failed to determine decoding key for {iss_did_web}"
-            ))?;
-
-        let validation = Validation::new(Algorithm::ES256);
-        let claims = decode::<AuthClaims>(&new_token, &decoding_key, &validation)?.claims;
-
-        *token_guard = TokenState::Fetched((new_token.clone(), claims));
-
-        Ok(new_token)
-    }
-
-    async fn load_verify_did(&self, client: &Client, did_web: &str) -> anyhow::Result<DidDocument> {
-        let url = resolve_did_web(did_web, false)?; // TODO: enforce should be configurable
-        let did = client
-            .get(url)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<DidDocument>()
-            .await?;
-
-        if did.id != did_web {
-            anyhow::bail!("Retrieved DID document does not match provided did:web");
-        }
-
-        Ok(did)
-    }
-
-    async fn do_get_token(
-        &self,
-        client: &Client,
-        remote_address: &str,
-        did_web: String,
-    ) -> anyhow::Result<String> {
-        let session = client
-            .post(format!("{}/auth/verify_me", remote_address))
-            .json(&VerifyMeRequest { did_web })
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Session>()
-            .await?;
-
-        let request = PresentationRequest {
-            request_url: session.openid4vp_url,
-        };
-
-        // TODO: do we really need to parse the response?
-        client
-            .post(format!(
-                "{}/wallet/{}/credentials/present",
-                self.wallet_url, self.wallet_id
-            ))
-            .json(&request)
+        let trimmed_remote = remote_address.trim_end_matches('/');
+        let response = client
+            .post(format!("{trimmed_remote}/auth/token"))
+            .bearer_auth(si_token)
             .send()
             .await?
             .error_for_status()?;
 
-        let start = Instant::now();
-
-        const POLL_INTERVAL: Duration = Duration::from_secs(3);
-        const MAX_DURATION: Duration = Duration::from_secs(10);
-
-        let check_status = async || -> anyhow::Result<Status> {
-            Ok(client
-                .get(format!(
-                    "{}/auth/status/{}",
-                    remote_address, session.session_id
-                ))
-                .send()
-                .await?
-                .error_for_status()?
-                .json::<Status>()
-                .await?)
-        };
-
-        loop {
-            if start.elapsed() >= MAX_DURATION {
-                anyhow::bail!("did not receive a valid status within time limit");
-            }
-
-            match check_status().await {
-                Ok(Status::Success { access_token }) => return Ok(access_token),
-                Ok(Status::Failed) => anyhow::bail!("authentication failed"),
-                Ok(Status::Pending) => {}
-                Err(err) => warn!("failed to retrieve status, will retry, error: {err}"),
-            }
-
-            let elapsed = start.elapsed();
-            let remaining = MAX_DURATION.saturating_sub(elapsed);
-            tokio::time::sleep(POLL_INTERVAL.min(remaining)).await;
-        }
+        let token_resp: TokenResponse = response.json().await?;
+        Ok(token_resp.access_token)
     }
 
-    async fn verify_me(
-        &self,
-        client: Client,
-        credential_types: HashMap<String, CredentialType>,
-        did_web: String,
-    ) -> anyhow::Result<Session> {
-        if credential_types.is_empty() {
-            anyhow::bail!("no credential types specified");
+    /// Resolve a DID document; the connector's own is served from memory.
+    pub(crate) async fn did_document(&self, _client: &Client, did: &str) -> anyhow::Result<Value> {
+        if did == self.local_did {
+            return Ok(self.local_did_document.clone());
         }
 
-        // s. https://docs.walt.id/community-stack/verifier2/policies/configuration
-        let request = VerificationRequest {
-            flow_type: "cross_device".to_string(),
-            core_flow: CoreFlow {
-                dcql_query: DcqlQuery {
-                    credentials: credential_types
-                        .into_iter()
-                        .map(|(id, ct)| Credential {
-                            id: id,
-                            format: ct.format,
-                            meta: CredentialMeta {
-                                vct_values: vec![ct.vct],
-                            },
-                        })
-                        .collect(),
-                },
-                policies: json!({
-                    "vc_policies": [
-                      "signature",
-                      "expiration",
-                      "not-before",
-                      {
-                        "policy": "allowed-issuer",
-                        "allowed_issuer": &self.allowed_issuers,
-                      }
-                    ]
-                }),
-            },
-        };
-
-        let session = client
-            .post(format!("{}/verification-session/create", self.verifier_url))
-            .json(&request)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Session>()
-            .await?;
-
-        {
-            let mut guard = self.sessions.lock().await;
-            guard.insert(session.session_id.clone(), did_web);
-        }
-
-        Ok(session)
+        Ok(serde_json::to_value(self.resolver.resolve(did).await?)?)
     }
 
-    async fn status(
-        &self,
-        client: Client,
-        session_id: String,
-    ) -> anyhow::Result<VerificationResult> {
-        let did_web = self
-            .sessions
-            .lock()
-            .await
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
-
-        let response = client
-            .get(format!(
-                "{}/verification-session/{}/info",
-                self.verifier_url, session_id
-            ))
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<StatusResponse>()
-            .await?;
-
-        let state = match response.status.as_str() {
-            "SUCCESSFUL" if response.presented_credentials.is_some() => {
-                self.sessions.lock().await.remove(&session_id);
-
-                VerificationState::Successful {
-                    credentials: response
-                        .presented_credentials
-                        .unwrap()
-                        .into_iter()
-                        .filter_map(|(id, cd)| {
-                            let Some(cd) = cd.into_iter().next() else {
-                                return None;
-                            };
-                            Some((id, cd))
-                        })
-                        .collect(),
-                    did_web,
-                }
-            }
-            "ACTIVE" | "UNUSED" | "IN_USE" | "VALIDATING_RECEIVED_REQUEST" | "PROCESSING_FLOW" => {
-                VerificationState::Pending
-            }
-            _ => VerificationState::Failed,
-        };
-
-        Ok(VerificationResult { session_id, state })
-    }
-
-    fn derive_access_token(
+    /// Map a presented `identity` credential onto a DSP access token.
+    pub(crate) fn derive_access_token(
         &self,
         credentials: HashMap<String, CredentialData>,
         iss_did_web: String,
@@ -366,17 +195,13 @@ impl Authenticator {
         debug!("Presented credentials:\n{:?}", &credentials);
         let mut found = false;
         for (id, cd) in credentials {
-            match id.as_str() {
-                "identity" => {
-                    if let Ok(data) =
-                        serde_json::from_value::<IdentityCredentialData>(cd.credential_data)
-                    {
-                        claims.data.insert("email".into(), data.email);
-                        claims.data.insert("country".into(), data.address.country);
-                        found = true;
-                    }
-                }
-                _ => {}
+            if id.as_str() == "identity"
+                && let Ok(data) =
+                    serde_json::from_value::<IdentityCredentialData>(cd.credential_data)
+            {
+                claims.data.insert("email".into(), data.email);
+                claims.data.insert("country".into(), data.address.country);
+                found = true;
             }
         }
         if !found {
@@ -406,59 +231,97 @@ impl Authenticator {
     pub(crate) fn decode(&self, token: &str) -> anyhow::Result<AuthClaims> {
         self.key_pair.decode(token)
     }
-}
 
-struct ExpBackoff {
-    current_attempt: u32,
-    initial_delay: Duration,
-    max_delay: Duration,
-    next_allowed_attempt_at: Instant,
-}
+    /// Credential service, issuance service and STS, all owned by the wallet.
+    ///
+    /// STS sits under `/api-internal` because nothing in the protocol calls it — it is a
+    /// local token-minting affordance, not a peer-facing endpoint.
+    fn service_routes(&self) -> Router {
+        let mut router = Router::new()
+            .nest(
+                &self.credential_service_path,
+                holder::router(self.holder.clone()),
+            )
+            .nest(
+                &self.issuance_service_path,
+                issuer::router(self.issuer.clone()),
+            );
 
-impl ExpBackoff {
-    pub fn new(initial_delay: Duration, max_delay: Duration) -> Self {
-        Self {
-            current_attempt: 0,
-            initial_delay,
-            max_delay,
-            next_allowed_attempt_at: Instant::now(),
-        }
-    }
-
-    pub fn should_retry(&mut self) -> bool {
-        let now = Instant::now();
-
-        if now < self.next_allowed_attempt_at {
-            return false;
+        if let Some(sts) = &self.sts {
+            router = router.nest("/api-internal/sts", sts::router(sts.clone()));
         }
 
-        self.current_attempt += 1;
-        self.calculate_next_window(now);
-
-        true
-    }
-
-    fn calculate_next_window(&mut self, last_attempt_time: Instant) {
-        let exponent = self.current_attempt.saturating_sub(1);
-        let multiplier = 2u32.pow(exponent);
-        let delay = (self.initial_delay * multiplier).min(self.max_delay);
-
-        self.next_allowed_attempt_at = last_attempt_time + delay;
+        router
     }
 }
 
-enum TokenState {
-    Fetched((String, AuthClaims)),
-    Fetching(ExpBackoff),
+#[cfg(test)]
+impl Authenticator {
+    /// Build a wallet directly, without a config file.
+    ///
+    /// Goes through the single real constructor, so tests exercise the production path.
+    pub(crate) fn for_test(
+        key_pair: KeyPair,
+        local_did: impl Into<String>,
+        allowed_issuers: Vec<String>,
+        resolver: Arc<dyn DidResolver>,
+        store: Arc<dyn CredentialStore>,
+    ) -> Self {
+        let local_did = local_did.into();
+        let authority = local_did.trim_start_matches("did:web:").replace("%3A", ":");
+
+        Self::new(WalletConfig {
+            kid: format!("{local_did}#keys-1"),
+            key_pair,
+            local_did,
+            allowed_issuers,
+            resolver,
+            client: Client::builder().no_proxy().build().expect("test client"),
+            store,
+            base_address: format!("http://{authority}"),
+            credential_service_path: "/api/credentials/v1".to_string(),
+            issuance_service_path: "/api/issuance/v1".to_string(),
+            issuer_url: String::new(),
+            sts_credentials: None,
+        })
+    }
+
+    pub(crate) fn credential_store(&self) -> Arc<dyn CredentialStore> {
+        self.holder.store()
+    }
 }
 
-impl Default for TokenState {
-    fn default() -> Self {
-        TokenState::Fetching(ExpBackoff::new(
-            Duration::from_secs(1),
-            Duration::from_secs(60),
-        ))
-    }
+fn build_local_did_document(
+    local_did: &str,
+    kid: &str,
+    public_jwk: Value,
+    credential_endpoint: &str,
+    issuer_endpoint: &str,
+) -> Value {
+    json!({
+        "id": local_did,
+        "verificationMethod": [{
+            "id": kid,
+            "type": "JsonWebKey2020",
+            "controller": local_did,
+            "publicKeyJwk": public_jwk
+        }],
+        "authentication": [kid],
+        "assertionMethod": [kid],
+        "capabilityInvocation": [kid],
+        "service": [
+            {
+                "id": format!("{local_did}#credential-service"),
+                "type": "CredentialService",
+                "serviceEndpoint": credential_endpoint
+            },
+            {
+                "id": format!("{local_did}#issuer-service"),
+                "type": "IssuerService",
+                "serviceEndpoint": issuer_endpoint
+            }
+        ]
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -474,8 +337,7 @@ struct IdentityCredentialData {
 
 pub(crate) fn router<T: Store>() -> Router<AppState<T>> {
     Router::new()
-        .route("/verify_me", post(verify_me))
-        .route("/status/{session_id}", get(status))
+        .route("/token", post(token::auth_token))
         .merge({
             let r = Router::new();
             #[cfg(feature = "tck")]
@@ -484,84 +346,17 @@ pub(crate) fn router<T: Store>() -> Router<AppState<T>> {
         })
 }
 
+/// The wallet's own service routes, lifted into the connector's state type.
+pub(crate) fn service_routes<T: Store>(state: &AppState<T>) -> Router<AppState<T>> {
+    state.authenticator.service_routes().with_state(())
+}
+
 pub(crate) async fn did(
     State(state): State<AppStateAuthentication>,
 ) -> Result<impl IntoResponse, AppError> {
     let did = state.participant_info.did_web()?;
-    let did_document = state.authenticator.did(&state.client, &did).await?;
+    let did_document = state.authenticator.did_document(&state.client, &did).await?;
     Ok(Json(did_document))
-}
-
-// TODO: maybe provide as payload the offer ID such that the necessary credentials can be
-// determined and requested.
-async fn verify_me(
-    State(state): State<AppStateAuthentication>,
-    Json(request): Json<VerifyMeRequest>,
-) -> Result<impl IntoResponse, AppError> {
-    let did_web = request.did_web;
-    _ = state
-        .authenticator
-        .load_verify_did(&state.client, &did_web)
-        .await
-        .context(format!("Failed to load DID for {did_web}"))?;
-
-    // TODO: the base (not offer specific) credential types should be configurable
-    const IDENTITY_VCT: &str = "identity_credential";
-    const IDENTITY_FORMAT: &str = "dc+sd-jwt";
-
-    let credential_types = HashMap::from([(
-        "identity".to_string(),
-        CredentialType {
-            format: IDENTITY_FORMAT.to_string(),
-            vct: format!(
-                "{}/openid4vci/{}",
-                state.authenticator.issuer_url, IDENTITY_VCT
-            ),
-        },
-    )]);
-    let session = state
-        .authenticator
-        .verify_me(state.client, credential_types, did_web)
-        .await?;
-
-    Ok((StatusCode::CREATED, Json(session)))
-}
-
-async fn status(
-    State(state): State<AppStateAuthentication>,
-    Path(session_id): Path<String>,
-) -> Result<impl IntoResponse, AppError> {
-    let status = match state
-        .authenticator
-        .status(state.client, session_id)
-        .await?
-        .state
-    {
-        VerificationState::Pending => Status::Pending,
-        VerificationState::Successful {
-            credentials,
-            did_web,
-        } => {
-            match state.authenticator.derive_access_token(
-                credentials,
-                state.participant_info.did_web()?, // issuer
-                did_web,                           // subject
-            ) {
-                Ok(Some(access_token)) => Status::Success { access_token },
-                Ok(None) => {
-                    error!("Credentials to claims mapping failed");
-                    Status::Failed
-                }
-                Err(err) => {
-                    error!("Failed to derive claims from credentials, error: {err}");
-                    Status::Failed
-                }
-            }
-        }
-        VerificationState::Failed => Status::Failed,
-    };
-
-    Ok((StatusCode::OK, Json(status)))
 }
 
 #[cfg(feature = "tck")]

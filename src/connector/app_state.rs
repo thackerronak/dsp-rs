@@ -2,20 +2,19 @@ use std::{collections::HashMap, env, sync::Arc};
 
 use anyhow::Context;
 use axum::extract::FromRef;
-use jsonwebtoken::{
-    Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode, jwk::Jwk,
-};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::{
     fs,
     sync::mpsc::{Receiver, Sender, channel},
 };
 
 use crate::{
-    auth::Authenticator,
-    connector::{utils::derive_did_web, validator::SchemaValidator},
+    auth::{Authenticator, WalletConfig},
+    connector::validator::SchemaValidator,
+    dcp::{resolver::HttpDidResolver, store::FileCredentialStore},
     negotiation::NegotiationEvent,
+    shared::{KeyPair, derive_did_web},
     store::Store,
     transfer::TransferEvent,
 };
@@ -61,13 +60,59 @@ struct Configuration {
     // corresponding public key is made available as DID.
     private_key_pem: String,
 
+    // walt.id issuer, used to redeem credential offers over OID4VCI.
     issuer_url: String,
-    verifier_url: String,
-    wallet_url: String,
-    wallet_id: String,
+
     allowed_issuers: Vec<String>,
 
     federation: HashMap<String, RemoteConnector>,
+
+    #[serde(default)]
+    dcp: DcpConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct DcpConfig {
+    #[serde(default = "default_credential_store_path")]
+    credential_store_path: String,
+
+    #[serde(default = "default_credential_service_path")]
+    credential_service_path: String,
+
+    #[serde(default = "default_issuance_service_path")]
+    issuance_service_path: String,
+
+    // STS is mounted only when both are configured. There are deliberately no defaults:
+    // a connector should not ship with well-known token-minting credentials.
+    #[serde(default)]
+    sts_client_id: Option<String>,
+
+    #[serde(default)]
+    sts_client_secret: Option<String>,
+}
+
+impl Default for DcpConfig {
+    fn default() -> Self {
+        Self {
+            credential_store_path: default_credential_store_path(),
+            credential_service_path: default_credential_service_path(),
+            issuance_service_path: default_issuance_service_path(),
+            sts_client_id: None,
+            sts_client_secret: None,
+        }
+    }
+}
+
+fn default_credential_store_path() -> String {
+    "data/credentials".to_string()
+}
+
+fn default_credential_service_path() -> String {
+    "/api/credentials/v1".to_string()
+}
+
+fn default_issuance_service_path() -> String {
+    "/api/issuance/v1".to_string()
 }
 
 pub(crate) struct AppState<T: Store> {
@@ -108,11 +153,33 @@ impl<T: Store> AppState<T> {
         let config: Configuration =
             serde_json::from_slice(&data).context("Failed to deserialize config")?;
 
-        let encoding_key = EncodingKey::from_ec_pem(&config.private_key_pem.as_bytes())
-            .context("Failed to decode private key format")?;
-        let jwk = Jwk::from_encoding_key(&encoding_key, Algorithm::ES256)
-            .context("Failed to convert encoding key to jwk")?;
-        let decoding_key = DecodingKey::from_jwk(&jwk).context("Failed to create decoding key")?;
+        let key_pair = KeyPair::from_ec_pem(&config.private_key_pem)?;
+        let client = Client::new();
+
+        let local_did = config.participant_info.did_web()?;
+        let kid = format!("{local_did}#keys-1");
+
+        let sts_credentials = config
+            .dcp
+            .sts_client_id
+            .zip(config.dcp.sts_client_secret);
+
+        let authenticator = Authenticator::new(WalletConfig {
+            key_pair: key_pair.clone(),
+            local_did,
+            kid,
+            allowed_issuers: config.allowed_issuers,
+            resolver: Arc::new(HttpDidResolver::new(client.clone())),
+            client: client.clone(),
+            store: Arc::new(FileCredentialStore::new(
+                config.dcp.credential_store_path.into(),
+            )),
+            base_address: config.participant_info.external_address.clone(),
+            credential_service_path: config.dcp.credential_service_path,
+            issuance_service_path: config.dcp.issuance_service_path,
+            issuer_url: config.issuer_url,
+            sts_credentials,
+        });
 
         let validator = SchemaValidator::new().await?;
 
@@ -124,19 +191,9 @@ impl<T: Store> AppState<T> {
                 participant_info: config.participant_info,
                 federation: Arc::new(config.federation),
                 validator: Arc::new(validator),
-                authenticator: Arc::new(Authenticator::new(
-                    config.issuer_url,
-                    config.verifier_url,
-                    config.wallet_url,
-                    config.wallet_id,
-                    config.allowed_issuers,
-                    KeyPair {
-                        encoding_key,
-                        decoding_key,
-                    },
-                )),
+                authenticator: Arc::new(authenticator),
                 store: Arc::new(store),
-                client: Client::new(),
+                client,
                 negotiation_events: tx_n,
                 transfer_events: tx_t,
             },
@@ -264,28 +321,5 @@ impl<T: Store> FromRef<AppState<T>> for AppStateReverseProxy<T> {
             store: app_state.store.clone(),
             client: app_state.client.clone(),
         }
-    }
-}
-
-pub(crate) struct KeyPair {
-    encoding_key: EncodingKey,
-    decoding_key: DecodingKey,
-}
-
-impl KeyPair {
-    pub(crate) fn encode<T: Serialize>(&self, claims: T) -> anyhow::Result<String> {
-        let header = Header::new(Algorithm::ES256);
-        encode(&header, &claims, &self.encoding_key).map_err(anyhow::Error::msg)
-    }
-
-    pub(crate) fn decode<T>(&self, token: &str) -> anyhow::Result<T>
-    where
-        T: for<'de> Deserialize<'de>,
-    {
-        let token_data = {
-            let validation = Validation::new(Algorithm::ES256);
-            decode::<T>(&token, &self.decoding_key, &validation)?
-        };
-        Ok(token_data.claims)
     }
 }
