@@ -12,6 +12,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,9 @@ struct IssuerMetadata {
     nonce_endpoint: Option<String>,
     #[serde(default)]
     credential_configurations_supported: HashMap<String, CredentialConfiguration>,
+    /// Whether the issuer takes a pre-authorized code with no `client_id` at all.
+    #[serde(default, rename = "pre-authorized_grant_anonymous_access_supported")]
+    anonymous_pre_authorized_access: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,15 +201,18 @@ impl Oid4vciState {
         let token_endpoint = resolve_token_endpoint(&inner.client, &issuer, &metadata).await?;
 
         // `client_id` is required unless the issuer advertises
-        // `pre-authorized_grant_anonymous_access_supported`. walt.id sets that to false
-        // and rejects an anonymous request with `invalid_client`, so identify the holder
-        // by its DID.
-        let body = format!(
-            "grant_type={}&pre-authorized_code={}&client_id={}",
+        // `pre-authorized_grant_anonymous_access_supported`. walt.id does not set it and
+        // rejects an anonymous request with `invalid_client`, so identify the holder by
+        // its DID. An issuer that does advertise it may have no notion of this client at
+        // all — Veres answers a request carrying one with a 500 — so send nothing.
+        let mut body = format!(
+            "grant_type={}&pre-authorized_code={}",
             form_encode(PRE_AUTHORIZED_GRANT),
             form_encode(&grant.pre_authorized_code),
-            form_encode(&inner.holder_did),
         );
+        if !metadata.anonymous_pre_authorized_access {
+            body.push_str(&format!("&client_id={}", form_encode(&inner.holder_did)));
+        }
 
         let token: TokenResponse = json_or_error(
             inner
@@ -236,6 +243,10 @@ impl Oid4vciState {
             PROOF_TYP,
         )?;
 
+        let configuration = metadata
+            .credential_configurations_supported
+            .get(&configuration_id);
+
         let response: CredentialResponse = json_or_error(
             inner
                 .client
@@ -265,10 +276,9 @@ impl Oid4vciState {
         // that type — the value both sides agree on is the configuration's advertised
         // `scope`. Storing the configuration id left the credential unmatchable, so the
         // peer returned an empty presentation list.
-        let credential_type = metadata
-            .credential_configurations_supported
-            .get(&configuration_id)
+        let credential_type = configuration
             .and_then(|config| config.scope.clone())
+            .or_else(|| credential_type_from_vc(&jwt))
             .unwrap_or_else(|| configuration_id.clone());
 
         let stored = StoredCredential {
@@ -289,17 +299,56 @@ impl Oid4vciState {
     }
 }
 
+/// Reads a received JWT's claims without verifying anything — the signature is the
+/// verifier's job, later, once the credential is presented.
+///
+/// Decoded by hand rather than through `jsonwebtoken`, whose `Algorithm` enum has no
+/// ES256K. Issuers do sign with it — walt.id's public demo among them — and going
+/// through the library turned a perfectly readable claim set into `None`.
+fn jwt_claims(jwt: &str) -> Option<Value> {
+    let payload = jwt.split('.').nth(1)?;
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()
+}
+
 /// The VC's `iss` is the issuer's DID, which is what `allowed_issuers` is matched
 /// against — not the HTTPS base URL the credential was fetched from.
 fn credential_issuer_did(jwt: &str) -> Option<String> {
-    #[derive(Deserialize)]
-    struct Claims {
-        iss: String,
+    jwt_claims(jwt)?.get("iss")?.as_str().map(str::to_string)
+}
+
+/// The DCP type a verifier queries for, read off the credential itself.
+///
+/// Preferred source is the configuration's advertised `scope`, but not every issuer
+/// publishes one. The credential's own `vc.type` carries the same information in the
+/// other spelling — the bundled issuer's `scope` is exactly the snake_case of its most
+/// specific type — so derive it rather than storing a label no verifier will match.
+fn credential_type_from_vc(jwt: &str) -> Option<String> {
+    const BASE_TYPE: &str = "VerifiableCredential";
+
+    let specific = jwt_claims(jwt)?
+        .get("vc")?
+        .get("type")?
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|ty| *ty != BASE_TYPE)
+        .next_back()?
+        .to_string();
+
+    Some(to_snake_case(&specific))
+}
+
+fn to_snake_case(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 4);
+
+    for (index, ch) in value.char_indices() {
+        if ch.is_uppercase() && index != 0 {
+            out.push('_');
+        }
+        out.extend(ch.to_lowercase());
     }
 
-    jsonwebtoken::dangerous::insecure_decode::<Claims>(jwt)
-        .ok()
-        .map(|data| data.claims.iss)
+    out
 }
 
 /// `application/x-www-form-urlencoded`, leaving the RFC 3986 unreserved characters
@@ -383,9 +432,15 @@ async fn json_or_error<T: serde::de::DeserializeOwned>(
 /// `http://host/.well-known/openid-credential-issuer/openid4vci` and **not** at
 /// `http://host/openid4vci/.well-known/openid-credential-issuer`. Naive concatenation
 /// 404s against any issuer whose identifier is not bare-origin.
-fn well_known_url(issuer: &str, suffix: &str) -> String {
+///
+/// Deployments disagree, though: walt.id's public demo serves only the concatenated
+/// form. Both are returned, spec placement first, so discovery can fall back.
+fn well_known_urls(issuer: &str, suffix: &str) -> Vec<String> {
     let Ok(url) = Url::parse(issuer) else {
-        return format!("{}/.well-known/{suffix}", issuer.trim_end_matches('/'));
+        return vec![format!(
+            "{}/.well-known/{suffix}",
+            issuer.trim_end_matches('/')
+        )];
     };
 
     let path = url.path().trim_matches('/').to_string();
@@ -396,21 +451,31 @@ fn well_known_url(issuer: &str, suffix: &str) -> String {
     let origin = origin.as_str().trim_end_matches('/');
 
     if path.is_empty() {
-        format!("{origin}/.well-known/{suffix}")
+        vec![format!("{origin}/.well-known/{suffix}")]
     } else {
-        format!("{origin}/.well-known/{suffix}/{path}")
+        vec![
+            format!("{origin}/.well-known/{suffix}/{path}"),
+            format!("{origin}/{path}/.well-known/{suffix}"),
+        ]
     }
 }
 
 async fn fetch_issuer_metadata(client: &Client, issuer: &str) -> anyhow::Result<IssuerMetadata> {
-    json_or_error(
-        client
-            .get(well_known_url(issuer, "openid-credential-issuer"))
-            .send()
-            .await?,
-        "issuer metadata",
-    )
-    .await
+    let mut last_error = None;
+
+    for url in well_known_urls(issuer, "openid-credential-issuer") {
+        let attempt = match client.get(&url).send().await {
+            Ok(response) => json_or_error(response, "issuer metadata").await,
+            Err(err) => Err(anyhow::Error::new(err)),
+        };
+
+        match attempt {
+            Ok(metadata) => return Ok(metadata),
+            Err(err) => last_error = Some(err.context(format!("issuer metadata at {url}"))),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("issuer `{issuer}` yields no metadata URL")))
 }
 
 /// Best effort: an issuer that neither returns `c_nonce` nor exposes a nonce endpoint
@@ -457,12 +522,13 @@ async fn resolve_token_endpoint(
         .unwrap_or(issuer)
         .trim_end_matches('/');
 
-    let discovery = well_known_url(auth_server, "oauth-authorization-server");
-    if let Ok(response) = client.get(&discovery).send().await
-        && let Ok(response) = response.error_for_status()
-        && let Ok(metadata) = response.json::<AuthServerMetadata>().await
-    {
-        return Ok(metadata.token_endpoint);
+    for discovery in well_known_urls(auth_server, "oauth-authorization-server") {
+        if let Ok(response) = client.get(&discovery).send().await
+            && let Ok(response) = response.error_for_status()
+            && let Ok(metadata) = response.json::<AuthServerMetadata>().await
+        {
+            return Ok(metadata.token_endpoint);
+        }
     }
 
     Ok(format!("{auth_server}/token"))
@@ -751,22 +817,64 @@ mod tests {
     }
 
     #[test]
-    fn test_well_known_url_inserts_segment_after_authority() {
+    fn test_well_known_urls_try_both_placements() {
         // RFC 8615: the well-known segment follows the authority and the issuer's own
-        // path is appended after it.
+        // path is appended after it. The appended form comes second as a fallback.
         assert_eq!(
-            well_known_url("http://issuer:7002/openid4vci", "openid-credential-issuer"),
-            "http://issuer:7002/.well-known/openid-credential-issuer/openid4vci"
+            well_known_urls("http://issuer:7002/openid4vci", "openid-credential-issuer"),
+            vec![
+                "http://issuer:7002/.well-known/openid-credential-issuer/openid4vci",
+                "http://issuer:7002/openid4vci/.well-known/openid-credential-issuer",
+            ]
         );
-        // A bare-origin issuer keeps the plain form, with or without a trailing slash.
+        // A bare-origin issuer keeps the plain form, with or without a trailing slash,
+        // and the two placements coincide so there is nothing to fall back to.
         assert_eq!(
-            well_known_url("http://issuer:7002", "openid-credential-issuer"),
-            "http://issuer:7002/.well-known/openid-credential-issuer"
+            well_known_urls("http://issuer:7002", "openid-credential-issuer"),
+            vec!["http://issuer:7002/.well-known/openid-credential-issuer"]
         );
         assert_eq!(
-            well_known_url("http://issuer:7002/", "oauth-authorization-server"),
-            "http://issuer:7002/.well-known/oauth-authorization-server"
+            well_known_urls("http://issuer:7002/", "oauth-authorization-server"),
+            vec!["http://issuer:7002/.well-known/oauth-authorization-server"]
         );
+    }
+
+    /// Some issuers sign with ES256K, which `jsonwebtoken` cannot name. Both readers
+    /// must still see the claims, or the credential lands with the issuer URL in place
+    /// of its DID and matches no entry in `allowed_issuers`.
+    #[test]
+    fn test_claims_are_read_from_an_es256k_credential() {
+        let jwt = unsigned_jwt(
+            json!({ "alg": "ES256K", "typ": "JWT" }),
+            json!({
+                "iss": "did:web:wallet.demo.walt.id:wallet-api:registry:portal",
+                "vc": { "type": ["VerifiableCredential", "IdentityCredential"] }
+            }),
+        );
+
+        assert_eq!(
+            credential_issuer_did(&jwt).as_deref(),
+            Some("did:web:wallet.demo.walt.id:wallet-api:registry:portal")
+        );
+        assert_eq!(
+            credential_type_from_vc(&jwt).as_deref(),
+            Some("identity_credential")
+        );
+    }
+
+    #[test]
+    fn test_credential_type_ignores_the_base_type() {
+        let jwt = unsigned_jwt(
+            json!({ "alg": "ES256" }),
+            json!({ "vc": { "type": ["VerifiableCredential"] } }),
+        );
+
+        assert_eq!(credential_type_from_vc(&jwt), None);
+    }
+
+    fn unsigned_jwt(header: Value, claims: Value) -> String {
+        let segment = |value: Value| URL_SAFE_NO_PAD.encode(value.to_string());
+        format!("{}.{}.signature", segment(header), segment(claims))
     }
 
     #[test]

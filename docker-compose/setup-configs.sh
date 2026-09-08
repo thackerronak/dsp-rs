@@ -27,8 +27,9 @@ fi
 
 echo "Loading environment variables from .env..."
 
-# Parse .env file safely
-while IFS='=' read -r key value; do
+# Parse .env file safely. The `|| [ -n "$key" ]` catches a final line with no trailing
+# newline, which `read` otherwise hands back with a non-zero status and the loop drops.
+while IFS='=' read -r key value || [ -n "$key" ]; do
   # Skip comments and empty lines
   [[ "$key" =~ ^#.*$ ]] && continue
   [[ -z "$key" ]] && continue

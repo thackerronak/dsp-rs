@@ -25,16 +25,16 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 url = { version = "2.5" }
 uuid = { version = "1.16.0", features = ["v4"] }
+base64 = "0.23"
 
-base64 = { version = "0.23", optional = true }
 p256 = { version = "0.14.0", optional = true }
 rand = { version = "0.10.2", optional = true }
 
 [features]
 default = ["echo"]
 tck = []
-echo = ["dep:base64"]
-keygen = ["dep:base64", "dep:p256", "dep:rand"]
+echo = []
+keygen = ["dep:p256", "dep:rand"]
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
