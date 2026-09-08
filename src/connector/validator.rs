@@ -83,8 +83,15 @@ async fn load_schemas(root: PathBuf) -> anyhow::Result<HashMap<String, Value>> {
                     if path.is_dir() {
                         stack.push(path);
                     } else if name.ends_with("-schema.json") {
-                        let data = fs::read(path).await?;
-                        let schema: Value = serde_json::from_slice(&data)?;
+                        // Three DSP transfer schemas reference
+                        // `transfer-schema.json#definitions/AbstractTransferCodeMessage`.
+                        // A `#name` fragment is a plain-name anchor, and `/` is not legal
+                        // in one, so the validator rejects the schema outright and the
+                        // connector cannot start. The intent is the JSON pointer
+                        // `#/definitions/...`, so normalise it on load.
+                        let text = fs::read_to_string(path).await?;
+                        let text = text.replace("#definitions/", "#/definitions/");
+                        let schema: Value = serde_json::from_str(&text)?;
                         let id = schema.get("$id").cloned();
                         if let Some(Value::String(id)) = id {
                             schemas.insert(id, schema);
