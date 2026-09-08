@@ -12,10 +12,12 @@ use serde_json::{Value, json};
 use crate::{
     auth::model::CredentialData,
     connector::app_state::AppStateAuthentication,
-    dcp::{
+    wallet::{
         bearer_token,
-        si_token::validate_si_token,
-        verifier::{query_peer_presentation, validate_vc, validate_vp},
+        dcp::{
+            si_token::validate_si_token,
+            verifier::{query_peer_presentation, validate_vc, validate_vp},
+        },
     },
 };
 

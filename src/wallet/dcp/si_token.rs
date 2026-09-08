@@ -1,11 +1,10 @@
 use std::{collections::HashMap, sync::Mutex};
 
-use async_trait::async_trait;
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, Validation, dangerous::insecure_decode, decode};
 use serde::{Deserialize, Serialize};
 
-use crate::{shared::DidDocument, shared::KeyPair};
+use crate::{shared::KeyPair, wallet::did::DidResolver};
 
 const SI_TOKEN_TTL_SECS: i64 = 300;
 
@@ -21,11 +20,6 @@ pub(crate) struct SiClaims {
     pub(crate) jti: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) token: Option<String>,
-}
-
-#[async_trait]
-pub(crate) trait DidResolver: Send + Sync {
-    async fn resolve(&self, did: &str) -> anyhow::Result<DidDocument>;
 }
 
 pub(crate) fn build_si_token(
@@ -112,6 +106,8 @@ impl ReplayCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::DidDocument;
+    use async_trait::async_trait;
     use jsonwebtoken::{EncodingKey, jwk::Jwk};
     use serde_json::{Value, json};
 

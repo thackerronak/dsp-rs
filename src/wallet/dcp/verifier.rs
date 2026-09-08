@@ -6,9 +6,12 @@ use serde_json::Value;
 use crate::{
     shared::DidDocument,
     shared::KeyPair,
-    dcp::{
-        model::{DCP_CONTEXT, PresentationQueryMessage, PresentationResponseMessage},
-        si_token::{DidResolver, build_si_token},
+    wallet::{
+        dcp::{
+            model::{DCP_CONTEXT, PresentationQueryMessage, PresentationResponseMessage},
+            si_token::build_si_token,
+        },
+        did::DidResolver,
     },
 };
 
@@ -156,9 +159,8 @@ pub(crate) async fn validate_vc(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dcp::{
-        issuer::mint_identity_credential,
-        scope::mint_jwt_vp,
+    use crate::wallet::{
+        dcp::{issuer::mint_identity_credential, scope::mint_jwt_vp},
         test_support::{HOLDER_DID, ISSUER_DID, kid, static_resolver, test_key_pair},
     };
     use serde_json::json;

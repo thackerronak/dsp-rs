@@ -57,7 +57,7 @@ pub(crate) fn mint_jwt_vp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dcp::test_support::{HOLDER_DID, ISSUER_DID, kid, test_key_pair};
+    use crate::wallet::test_support::{HOLDER_DID, ISSUER_DID, kid, test_key_pair};
     use jsonwebtoken::dangerous::insecure_decode;
     use serde_json::Value;
 

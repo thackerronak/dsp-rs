@@ -15,16 +15,19 @@ use crate::{
     AppError,
     auth::{extractor::AuthClaims, model::CredentialData},
     connector::app_state::{AppState, AppStateAuthentication},
-    dcp::{
-        holder::{self, HolderState},
-        issuer::{self, IssuerState},
-        oid4vci::{self, Oid4vciState},
-        si_token::{DidResolver, ReplayCache, build_si_token},
-        store::CredentialStore,
-        sts::{self, StsState},
-    },
     shared::KeyPair,
     store::Store,
+    wallet::{
+        dcp::{
+            holder::{self, HolderState},
+            issuer::{self, IssuerState},
+            si_token::{ReplayCache, build_si_token},
+            sts::{self, StsState},
+        },
+        did::DidResolver,
+        oid4vc::vci::{self, Oid4vciState},
+        store::CredentialStore,
+    },
 };
 
 pub(crate) mod extractor;
@@ -39,7 +42,7 @@ struct TokenResponse {
     access_token: String,
 }
 
-/// Everything needed to stand up the connector's DCP wallet.
+/// Everything needed to stand up the connector's wallet.
 pub(crate) struct WalletConfig {
     pub(crate) key_pair: KeyPair,
     pub(crate) local_did: String,
@@ -57,8 +60,9 @@ pub(crate) struct WalletConfig {
     pub(crate) sts_credentials: Option<(String, String)>,
 }
 
-/// The connector's identity: a native DCP wallet (holder + verifier, plus a retained
-/// self-issuance path) behind one `did:web`.
+/// The connector's identity: a native wallet (holder + verifier, plus a retained
+/// self-issuance path) behind one `did:web`. Credentials are exchanged over DCP, and
+/// redeemed from an external issuer over OID4VCI.
 ///
 /// Concrete on purpose — there is a single implementation, so there is no backend trait
 /// and no downcast in the request path.
@@ -265,7 +269,7 @@ impl Authenticator {
 
         router.nest(
             "/api-internal/credentials",
-            oid4vci::router(self.oid4vci.clone()),
+            vci::router(self.oid4vci.clone()),
         )
     }
 }

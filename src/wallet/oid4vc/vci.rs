@@ -19,8 +19,8 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::{
-    dcp::store::{CredentialStore, StoredCredential},
     shared::KeyPair,
+    wallet::store::{CredentialStore, StoredCredential},
 };
 
 const PRE_AUTHORIZED_GRANT: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
@@ -515,8 +515,8 @@ mod tests {
     use axum::{extract::State as AxumState, routing::get};
     use jsonwebtoken::decode_header;
 
-    use crate::dcp::{
-        issuer::mint_identity_credential,
+    use crate::wallet::{
+        dcp::issuer::mint_identity_credential,
         store::FileCredentialStore,
         test_support::{HOLDER_DID, ISSUER_DID, TestServer, kid, test_key_pair},
     };

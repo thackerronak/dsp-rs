@@ -13,7 +13,7 @@
       "remote_address": "http://party-b-connector:3000"
     }
   },
-  "dcp": {
+  "wallet": {
     "credential_store_path": "/app/data/credentials",
     "sts_client_id": "dsp-client",
     "sts_client_secret": "dsp-secret"

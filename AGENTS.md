@@ -3,9 +3,10 @@
 A Rust implementation of the [Dataspace Protocol (DSP)](https://docs.internationaldataspaces.org/)
 connector (Eclipse EDC ecosystem). Single binary (`dsp-rs`) speaking DSP 2025-1:
 catalog, contract negotiation, and transfer. Rust edition 2024, axum + tokio, ES256
-JWT auth, file-based storage. Authentication is a **native DCP (Decentralized Claims
-Protocol) wallet** — holder, verifier, and issuer behind one `did:web`, with no
-external wallet or verifier service.
+JWT auth, file-based storage. Authentication is a **native wallet** — holder,
+verifier, and issuer behind one `did:web`, with no external wallet or verifier
+service. The wallet speaks two credential-exchange protocols: **DCP** (Decentralized
+Claims Protocol, issuance and presentation) and **OID4VC** (issuance only, OID4VCI).
 
 ## Setup
 
@@ -57,14 +58,15 @@ RUST_LOG=debug CONFIG_PATH="tck/config.json" cargo run --bin dsp-rs --features t
 ## Layering — the one rule to preserve
 
 ```
-connector  ->  auth  ->  dcp  ->  shared
+connector  ->  auth  ->  wallet  ->  shared
 ```
 
-`src/dcp/` must depend **only** on `src/shared/` and external crates — never on
-`crate::connector` or `crate::auth`. A test in `src/dcp/mod.rs` enforces this. It
-exists so the wallet can be lifted into its own crate, or its own process, as a move
-rather than a redesign. If you need something from the connector inside `dcp`, move
-it into `shared/` instead of reaching across.
+`src/wallet/` must depend **only** on `src/shared/` and external crates — never on
+`crate::connector` or `crate::auth`. A test in `src/wallet/mod.rs` enforces this,
+walking the whole tree including the protocol submodules. It exists so the wallet can
+be lifted into its own crate, or its own process, as a move rather than a redesign.
+If you need something from the connector inside `wallet`, move it into `shared/`
+instead of reaching across.
 
 ## Code structure
 
@@ -72,17 +74,19 @@ it into `shared/` instead of reaching across.
 src/
 ├── main.rs            # entrypoint, AppError -> HTTP mapping
 ├── shared/            # KeyPair, DID-document types, did:web helpers
-├── dcp/               # the DCP wallet, depends only on shared/
-│   ├── si_token.rs    # Self-Issued ID Token build/validate, ReplayCache, DidResolver
-│   ├── holder.rs      # Credential Service (/api/credentials/v1)
-│   ├── issuer.rs      # Issuer Service (/api/issuance/v1)
-│   ├── verifier.rs    # presentation pull + VP/VC validation
-│   ├── scope.rs       # scope grammar + JWT-VP minting
-│   ├── sts.rs         # Secure Token Service (opt-in, /api-internal/sts)
-│   ├── oid4vci.rs     # redeem a credential offer from an external issuer
-│   ├── resolver.rs    # did:web over HTTP
-│   ├── store.rs       # credential store (0600 files)
-│   └── model.rs       # DCP message serde
+├── wallet/            # the wallet, depends only on shared/
+│   ├── store.rs       # credential store (0600 files) — protocol-agnostic
+│   ├── did.rs         # DidResolver trait + did:web over HTTP
+│   ├── dcp/           # Decentralized Claims Protocol 1.0
+│   │   ├── si_token.rs  # Self-Issued ID Token build/validate, ReplayCache
+│   │   ├── holder.rs    # Credential Service (/api/credentials/v1)
+│   │   ├── issuer.rs    # Issuer Service (/api/issuance/v1)
+│   │   ├── verifier.rs  # presentation pull + VP/VC validation
+│   │   ├── scope.rs     # scope grammar + JWT-VP minting
+│   │   ├── sts.rs       # Secure Token Service (opt-in, /api-internal/sts)
+│   │   └── model.rs     # DCP message serde
+│   └── oid4vc/        # OpenID for Verifiable Credentials
+│       └── vci.rs     # OID4VCI: redeem a credential offer from an external issuer
 ├── auth/              # Authenticator (concrete), /auth/token verifier, AuthClaims
 ├── connector/         # start(), build_app(), Configuration, AppState
 ├── catalog/ negotiation/ transfer/   # DSP handlers (consumer.rs / provider.rs)

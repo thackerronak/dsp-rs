@@ -12,11 +12,11 @@ use tokio::{
 use crate::{
     auth::{Authenticator, WalletConfig},
     connector::validator::SchemaValidator,
-    dcp::{resolver::HttpDidResolver, store::FileCredentialStore},
     negotiation::NegotiationEvent,
     shared::{KeyPair, derive_did_web},
     store::Store,
     transfer::TransferEvent,
+    wallet::{did::HttpDidResolver, store::FileCredentialStore},
 };
 
 #[derive(Debug, Deserialize, Clone)]
@@ -67,12 +67,13 @@ struct Configuration {
 
     federation: HashMap<String, RemoteConnector>,
 
-    #[serde(default)]
-    dcp: DcpConfig,
+    /// Accepts the legacy key `"dcp"` so existing config files keep working.
+    #[serde(default, alias = "dcp")]
+    wallet: WalletSettings,
 }
 
 #[derive(Debug, Deserialize)]
-struct DcpConfig {
+struct WalletSettings {
     #[serde(default = "default_credential_store_path")]
     credential_store_path: String,
 
@@ -91,7 +92,7 @@ struct DcpConfig {
     sts_client_secret: Option<String>,
 }
 
-impl Default for DcpConfig {
+impl Default for WalletSettings {
     fn default() -> Self {
         Self {
             credential_store_path: default_credential_store_path(),
@@ -160,9 +161,9 @@ impl<T: Store> AppState<T> {
         let kid = format!("{local_did}#keys-1");
 
         let sts_credentials = config
-            .dcp
+            .wallet
             .sts_client_id
-            .zip(config.dcp.sts_client_secret);
+            .zip(config.wallet.sts_client_secret);
 
         let authenticator = Authenticator::new(WalletConfig {
             key_pair: key_pair.clone(),
@@ -172,11 +173,11 @@ impl<T: Store> AppState<T> {
             resolver: Arc::new(HttpDidResolver::new(client.clone())),
             client: client.clone(),
             store: Arc::new(FileCredentialStore::new(
-                config.dcp.credential_store_path.into(),
+                config.wallet.credential_store_path.into(),
             )),
             base_address: config.participant_info.external_address.clone(),
-            credential_service_path: config.dcp.credential_service_path,
-            issuance_service_path: config.dcp.issuance_service_path,
+            credential_service_path: config.wallet.credential_service_path,
+            issuance_service_path: config.wallet.issuance_service_path,
             issuer_url: config.issuer_url,
             sts_credentials,
         });
@@ -327,6 +328,7 @@ impl<T: Store> FromRef<AppState<T>> for AppStateReverseProxy<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// The demo configs are the easiest thing to break silently — a stale key, a
     /// missing field, or a wallet section that no longer matches `Configuration`
@@ -360,6 +362,43 @@ mod tests {
             );
 
             assert!(!config.issuer_url.is_empty(), "{path}: issuer_url is empty");
+
+            // The wallet section defaults, so a renamed key would parse into silence
+            // rather than an error: no credential store path, and no STS mounted.
+            assert_eq!(
+                config.wallet.credential_store_path, "/app/data/credentials",
+                "{path}: the wallet section did not parse"
+            );
+            assert!(
+                config.wallet.sts_client_id.is_some() && config.wallet.sts_client_secret.is_some(),
+                "{path}: STS credentials did not parse, so the STS would not be mounted"
+            );
         }
+    }
+
+    /// The section was called `dcp` before the wallet grew a second exchange protocol.
+    /// Existing config files must keep working.
+    #[test]
+    fn test_legacy_dcp_config_key_still_parses() {
+        let data = json!({
+            "participant_info": {
+                "id": "Participant A",
+                "external_address": "http://party-a-connector:3000"
+            },
+            "private_key_pem": "unused-here",
+            "issuer_url": "http://issuer:7002",
+            "allowed_issuers": ["did:web:issuer-did-server"],
+            "federation": {},
+            "dcp": {
+                "credential_store_path": "/app/data/credentials",
+                "sts_client_id": "dsp-client",
+                "sts_client_secret": "dsp-secret"
+            }
+        });
+
+        let config: Configuration = serde_json::from_value(data).expect("legacy key parses");
+
+        assert_eq!(config.wallet.credential_store_path, "/app/data/credentials");
+        assert_eq!(config.wallet.sts_client_id.as_deref(), Some("dsp-client"));
     }
 }

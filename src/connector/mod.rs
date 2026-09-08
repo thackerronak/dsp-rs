@@ -116,7 +116,8 @@ where
         // catalog, negotiation and transfer
         .nest(DSP_API_PATH_2025_1, dsp_api_routes)
         .nest("/auth", auth::router())
-        // DCP wallet services: credential service, issuance service, STS
+        // wallet services: DCP credential service, DCP issuance service, STS,
+        // and the OID4VCI redeem endpoint
         .merge(auth::service_routes(&state))
         // reverse proxy
         .nest(

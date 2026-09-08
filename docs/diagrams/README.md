@@ -33,7 +33,7 @@ no local tooling needed. It mirrors the demo in
   (`/api/credentials/v1/presentations/query`), validates the VP and the VC inside
   it against `allowed_issuers`, and returns the ES256 Bearer token that protects
   every DSP call. Each connector is its own holder and verifier — no external
-  wallet or verifier service, no session, no polling (see `src/auth/`, `src/dcp/`).
+  wallet or verifier service, no session, no polling (see `src/auth/`, `src/wallet/`).
 - **Step 2 — Contract negotiation**: asynchronous, callback-based state machine
   (`REQUESTED → OFFERED/ACCEPTED → AGREED → VERIFIED → FINALIZED`) over
   `/api/2025/1/negotiations/*` (see `src/negotiation/`).

@@ -9,7 +9,7 @@ use tokio::{net::TcpListener, sync::oneshot};
 use crate::{
     shared::DidDocument,
     shared::KeyPair,
-    dcp::si_token::{DidResolver, build_si_token},
+    wallet::{dcp::si_token::build_si_token, did::DidResolver},
 };
 
 pub(crate) const TEST_PRIVATE_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----

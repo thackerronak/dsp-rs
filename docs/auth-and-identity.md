@@ -15,8 +15,8 @@ There is no external wallet or verifier service.
 | DSP concept | Real-world | Code |
 |-------------|-----------|------|
 | **DID** + **`did.json`** | Your public passport page + seal (public key) | `auth::did`, `Authenticator::did_document`, `src/shared/did.rs` |
-| **Verifiable Credential** in the **credential store** | A government ID card in your pocket | `src/dcp/holder.rs`, `src/dcp/store.rs` |
-| **Verifier** | The guard who checks your ID is genuine | `src/dcp/verifier.rs`, `src/auth/token.rs` |
+| **Verifiable Credential** in the **credential store** | A government ID card in your pocket | `src/wallet/holder.rs`, `src/wallet/store.rs` |
+| **Verifier** | The guard who checks your ID is genuine | `src/wallet/verifier.rs`, `src/auth/token.rs` |
 
 `did:web` means each party **hosts its own identity page** at its own domain —
 `did:web:party-b-connector%3A3000` decodes to
@@ -43,14 +43,14 @@ pull**. InsureCo wants a badge from AutoParts:
 1. **Self-Issued ID Token** — InsureCo signs a short-lived JWT with its own key
    (`iss` = `sub` = InsureCo's DID, `aud` = AutoParts' DID, plus a `jti`) and POSTs
    it as a Bearer token to AutoParts' `/auth/token` (`build_si_token`,
-   `src/dcp/si_token.rs`).
+   `src/wallet/si_token.rs`).
 2. **AutoParts validates it** — resolves InsureCo's DID document, checks the
    signature, `aud`, expiry, and that the `jti` hasn't been seen before
    (`ReplayCache`).
 3. **AutoParts pulls a presentation** — it reads InsureCo's `CredentialService`
    from that DID document and POSTs a `PresentationQueryMessage` asking for scope
    `org.eclipse.dspace.dcp.vc.type:identity_credential`. InsureCo answers with a
-   **JWT-VP** wrapping its credential (`src/dcp/verifier.rs`, `src/dcp/scope.rs`).
+   **JWT-VP** wrapping its credential (`src/wallet/verifier.rs`, `src/wallet/scope.rs`).
 4. **AutoParts validates VP + VC** — the VP must be signed by InsureCo and
    addressed to AutoParts; the VC inside must be signed by an issuer listed in
    **`allowed_issuers`**. Then it maps the credential onto claims

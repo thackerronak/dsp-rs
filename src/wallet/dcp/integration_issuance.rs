@@ -5,16 +5,15 @@ use jsonwebtoken::dangerous::insecure_decode;
 use reqwest::Client;
 use serde_json::Value;
 
-use crate::{
+use crate::wallet::{
     dcp::{
         holder::{self, HolderState},
         issuer::{self, IssuerState},
-        test_support::{
-            HOLDER_DID, ISSUER_DID, SharedResolver, TestServer, kid, make_did_document,
-            test_key_pair,
-        },
     },
-    dcp::store::{CredentialStore, FileCredentialStore, StoredCredential},
+    store::{CredentialStore, FileCredentialStore, StoredCredential},
+    test_support::{
+        HOLDER_DID, ISSUER_DID, SharedResolver, TestServer, kid, make_did_document, test_key_pair,
+    },
 };
 
 #[tokio::test]

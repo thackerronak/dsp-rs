@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{shared::KeyPair, dcp::si_token::build_si_token};
+use crate::{shared::KeyPair, wallet::dcp::si_token::build_si_token};
 
 const TOKEN_TTL_SECS: u64 = 300;
 
@@ -123,7 +123,7 @@ async fn token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dcp::si_token::SiClaims;
+    use crate::wallet::dcp::si_token::SiClaims;
     use axum::{
         body::Body,
         http::{Request, header::CONTENT_TYPE},

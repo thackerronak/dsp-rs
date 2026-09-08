@@ -2,7 +2,7 @@
 
 Two connectors and one issuer.
 
-Each connector runs a **native DCP wallet** — its own holder and verifier behind a
+Each connector runs a **native wallet** — its own holder and verifier behind a
 single `did:web`. It serves its own `/.well-known/did.json` and stores its own
 credentials, so there is no wallet or verifier service to configure. The only
 external identity component is the **walt.id issuer**, which is the point: an issuer
@@ -84,7 +84,7 @@ or an issuer missing from `allowed_issuers`.
 | `private_key_pem` | Signs SI tokens, presentations and access tokens. Its public half is published in the connector's DID document. |
 | `issuer_url` | The walt.id issuer. An offer naming a different issuer is refused. |
 | `allowed_issuers` | Whose credentials the verifier accepts. `did:web:issuer-did-server` is the walt.id issuer. |
-| `dcp.sts_client_id` / `sts_client_secret` | Enable the STS used in step 3. Omit both and it is not mounted — there are no default credentials. |
+| `wallet.sts_client_id` / `sts_client_secret` | Enable the STS used in step 3. Omit both and it is not mounted — there are no default credentials. |
 
 To generate fresh keys:
 

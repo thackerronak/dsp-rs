@@ -12,17 +12,20 @@ use serde_json::Value;
 
 use crate::{
     shared::KeyPair,
-    dcp::{
+    wallet::{
         bearer_token,
-        model::{
-            CredentialMessage, CredentialOfferMessage, CredentialReference,
-            CredentialRequestMessage, DCP_CONTEXT, PresentationQueryMessage,
-            PresentationResponseMessage,
+        dcp::{
+            model::{
+                CredentialMessage, CredentialOfferMessage, CredentialReference,
+                CredentialRequestMessage, DCP_CONTEXT, PresentationQueryMessage,
+                PresentationResponseMessage,
+            },
+            scope::{ScopeQuery, mint_jwt_vp},
+            si_token::{ReplayCache, build_si_token, validate_si_token},
         },
-        scope::{ScopeQuery, mint_jwt_vp},
-        si_token::{DidResolver, ReplayCache, build_si_token, validate_si_token},
+        did::DidResolver,
+        store::{CredentialStore, StoredCredential},
     },
-    dcp::store::{CredentialStore, StoredCredential},
 };
 
 #[derive(Clone)]
@@ -261,11 +264,11 @@ async fn query_presentations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        dcp::test_support::{
+    use crate::wallet::{
+        store::FileCredentialStore,
+        test_support::{
             HOLDER_DID, ISSUER_DID, issuer_si_token, kid, static_resolver, test_key_pair,
         },
-        dcp::store::FileCredentialStore,
     };
     use axum::{
         body::Body,

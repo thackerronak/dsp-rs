@@ -16,13 +16,17 @@ use serde_json::{Value, json};
 
 use crate::{
     shared::KeyPair,
-    dcp::{
+    wallet::{
         bearer_token,
-        model::{
-            CredentialContainer, CredentialMessage, CredentialObject, CredentialOfferMessage,
-            CredentialRequestMessage, CredentialRequestStatusMessage, DCP_CONTEXT, IssuerMetadata,
+        dcp::{
+            model::{
+                CredentialContainer, CredentialMessage, CredentialObject, CredentialOfferMessage,
+                CredentialRequestMessage, CredentialRequestStatusMessage, DCP_CONTEXT,
+                IssuerMetadata,
+            },
+            si_token::{ReplayCache, build_si_token, validate_si_token},
         },
-        si_token::{DidResolver, ReplayCache, build_si_token, validate_si_token},
+        did::DidResolver,
     },
 };
 
@@ -304,7 +308,7 @@ async fn trigger_offer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dcp::test_support::{
+    use crate::wallet::test_support::{
         HOLDER_DID, ISSUER_DID, holder_si_token, kid, static_resolver, test_key_pair,
     };
     use axum::{

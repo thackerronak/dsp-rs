@@ -4,8 +4,8 @@ use serde_json::json;
 
 use crate::{
     auth::{Authenticator, extractor::AuthClaims, model::CredentialData},
-    dcp::{store::FileCredentialStore, test_support::SharedResolver},
     shared::KeyPair,
+    wallet::{store::FileCredentialStore, test_support::SharedResolver},
 };
 
 const TEST_PRIVATE_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----

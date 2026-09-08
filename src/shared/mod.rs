@@ -1,8 +1,8 @@
-//! Types shared between the connector and the DCP wallet.
+//! Types shared between the connector and the wallet.
 //!
-//! Nothing in here may depend on `crate::connector`, `crate::auth` or `crate::dcp`.
+//! Nothing in here may depend on `crate::connector`, `crate::auth` or `crate::wallet`.
 //! This is what keeps the dependency arrow one-way
-//! (`connector -> auth -> dcp -> shared`) and makes a future crate split mechanical.
+//! (`connector -> auth -> wallet -> shared`) and makes a future crate split mechanical.
 
 pub(crate) mod did;
 pub(crate) mod key_pair;
