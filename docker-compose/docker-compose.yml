@@ -41,6 +41,25 @@ services:
     ports:
       - "13000:3000"
 
+  # NGrok tunnels - only started with --profile ngrok
+  # Excluded by default in local development
+  party-a-ngrok:
+    image: ${NGROK_IMAGE}
+    container_name: party-a-ngrok
+    command:
+      - "http"
+      - "party-a-connector:3000"
+      - "--authtoken=${PARTY_A_NGROK_AUTHTOKEN}"
+      - "--url=https://${PARTY_A_NGROK_DOMAIN}"
+    networks:
+      - ssi-network
+    ports:
+      - "14040:4040"
+    depends_on:
+      - party-a-connector
+    profiles:
+      - ngrok
+
   # ==========================================
   # PARTY B
   # ==========================================
@@ -54,6 +73,23 @@ services:
       - ssi-network
     ports:
       - "23000:3000"
+
+  party-b-ngrok:
+    image: ${NGROK_IMAGE}
+    container_name: party-b-ngrok
+    command:
+      - "http"
+      - "party-b-connector:3000"
+      - "--authtoken=${PARTY_B_NGROK_AUTHTOKEN}"
+      - "--url=https://${PARTY_B_NGROK_DOMAIN}"
+    networks:
+      - ssi-network
+    ports:
+      - "24040:4040"
+    depends_on:
+      - party-b-connector
+    profiles:
+      - ngrok
 
 networks:
   ssi-network:

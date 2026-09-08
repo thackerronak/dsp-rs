@@ -1,3 +1,18 @@
 /data
 /target
 /build-ana.sh
+
+# Environment files with secrets
+.env
+.env.local
+*.env.local
+
+# Generated config files (created by setup-configs.sh)
+docker-compose/party-a/connector/config.json
+docker-compose/party-b/connector/config.json
+
+# Docker compose local data
+docker-compose/**/data/
+!docker-compose/**/data/.gitkeep
+
+AUDIT.md

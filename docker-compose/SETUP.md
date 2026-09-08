@@ -1,6 +1,6 @@
-# Demo setup
+# Demo Setup
 
-Two connectors and one issuer.
+Two connectors and one issuer with dual-mode configuration (localhost or HTTPS via NGrok).
 
 Each connector runs a **native wallet** — its own holder and verifier behind a
 single `did:web`. It serves its own `/.well-known/did.json` and stores its own
@@ -8,24 +8,77 @@ credentials, so there is no wallet or verifier service to configure. The only
 external identity component is the **walt.id issuer**, which is the point: an issuer
 should be a third party, not the connector vouching for itself.
 
-| Service | Port | Role |
-|---|---|---|
-| `issuer` | 7002 | walt.id issuer — signs credentials |
-| `issuer-did-server` | 17002 | serves the issuer's DID document |
-| `party-a-connector` | 13000 | connector (`did:web:party-a-connector%3A3000`) |
-| `party-b-connector` | 23000 | connector (`did:web:party-b-connector%3A3000`) |
+## Architecture
 
-## 1. Build and start
+### Services
+
+| Service | Port | Role | DID |
+|---|---|---|---|
+| `issuer` | 7002 | walt.id issuer — signs credentials | `did:web:issuer-did-server` |
+| `issuer-did-server` | 17002 | serves the issuer's DID document | — |
+| `party-a-connector` | 13000 | connector (localhost) | `did:web:party-a-connector%3A3000` |
+| `party-b-connector` | 23000 | connector (localhost) | `did:web:party-b-connector%3A3000` |
+
+With `ENFORCE_HTTPS=true`, connectors expose via HTTPS ngrok tunnels with their ngrok domains as DIDs.
+
+### Modes
+
+**Development (default)** — `ENFORCE_HTTPS=false`
+- Localhost HTTP only
+- No external dependencies
+- Fast local testing
+
+**Production** — `ENFORCE_HTTPS=true`
+- HTTPS via NGrok tunnels
+- Requires NGrok auth tokens and reserved domains
+- Real TLS encryption
+
+## Quick Start
+
+### 1. Generate Configuration
 
 ```sh
-./build.sh                                          # connector:latest
-docker compose -f docker-compose/docker-compose.yml up
+cd docker-compose
+./setup-configs.sh
 ```
 
-`build.sh` compiles the connector inside the image, so it needs only Docker — no musl
-target or musl linker on the host — and builds for the host architecture.
+This will:
+- Create `.env` from `.env.sample` (if missing)
+- Generate connector `config.json` files
+- Default: localhost HTTP, ready to start
 
-## 2. Seed each connector with a credential
+### 2. Start Services
+
+**Localhost (default):**
+```sh
+docker-compose up -d
+```
+
+**NGrok HTTPS (optional):**
+```sh
+# Edit .env first: set ENFORCE_HTTPS=true and add NGrok credentials
+vi .env
+./setup-configs.sh
+docker-compose --profile ngrok up -d
+```
+
+### 3. Verify Startup
+
+```sh
+docker-compose ps
+docker-compose logs -f party-a-connector
+```
+
+## Configuration Files
+
+- `.env` — Environment variables (auto-created from `.env.sample`, never committed)
+- `.env.sample` — Template with all available options
+- `party-{a,b}/connector/config.json.template` — Config templates (with variable substitution)
+- `party-{a,b}/connector/config.json` — Generated configs (never committed, created by setup script)
+
+## Seeding Credentials
+
+### 1. Seed each connector with a credential
 
 The connector redeems an OID4VCI offer itself, signing the holder proof with its own
 key — nothing is copied into an external wallet.
@@ -53,7 +106,7 @@ curl -s http://localhost:23000/api/credentials/v1/credentials | jq
 Use the `identityCredentialJwtVc` profile. The bundled `identityCredentialSdJwt`
 profile issues an IETF SD-JWT VC, which this connector's verifier cannot read.
 
-## 3. Check the handshake
+### 2. Check the handshake
 
 Optional — connectors do this themselves before any DSP call. Mint a Self-Issued ID
 Token as party B addressed to party A, then exchange it:
@@ -61,7 +114,7 @@ Token as party B addressed to party A, then exchange it:
 ```sh
 SI=$(curl -s -X POST http://localhost:23000/api-internal/sts/token \
   -H 'content-type: application/x-www-form-urlencoded' \
-  -d 'grant_type=client_credentials&client_id=dsp-client&client_secret=dsp-secret&audience=did%3Aweb%3Aparty-a-connector%253A3000' \
+  -d 'grant_type=client_credentials&client_id=dsp-client&client_secret=dsp-secret&audience=did%3Aweb%3Aparty-a-connector%3A3000' \
   | jq -r .access_token)
 
 curl -s -X POST http://localhost:13000/auth/token -H "Authorization: Bearer $SI" | jq
@@ -72,42 +125,84 @@ presentation pulled from party B's Credential Service, VP and VC verified, claim
 mapped.
 
 A `401` means one of those failed. Run the connectors with `RUST_LOG=debug` — the
-verifier logs which step it was. The usual causes are no credential seeded (step 2)
-or an issuer missing from `allowed_issuers`.
+verifier logs which step it was. The usual causes are no credential seeded or an issuer 
+missing from `allowed_issuers`.
 
 ## Configuration
 
+Connector configs are **generated** from templates using environment variables in `.env`:
+
+```
+setup-configs.sh:
+  .env (ENFORCE_HTTPS, keys, domains)
+    ↓
+  config.json.template + environment substitution
+    ↓
+  config.json (generated)
+```
+
+### Config File Structure
+
 `[party-a|party-b]/connector/config.json`:
 
-| Key | Meaning |
-|---|---|
-| `private_key_pem` | Signs DSP access and transfer tokens. Self-issued and self-validated, so it is **not** published in the DID document. |
-| `wallet.private_key_pem` | Signs SI tokens, presentations, issued credentials and OID4VCI holder proofs. Its public half is published in the DID document as `#keys-1`. Required. |
-| `federation.<name>.did` | The peer's DID. Its DSP endpoint is resolved from the `DataService` entry in its DID document, so no address is configured. |
-| `issuer_url` | The walt.id issuer. An offer naming a different issuer is refused. |
-| `allowed_issuers` | Whose credentials the verifier accepts. `did:web:issuer-did-server` is the walt.id issuer. |
-| `wallet.sts_client_id` / `sts_client_secret` | Enable the STS used in step 3. Omit both and it is not mounted — there are no default credentials. |
+| Key | Source | Meaning |
+|---|---|---|
+| `participant_info.external_address` | `${PARTY_*_EXTERNAL_ADDRESS}` from .env | HTTP/HTTPS endpoint where this connector is reachable |
+| `participant_info.id` | hardcoded | Participant name |
+| `private_key_pem` | `${PARTY_*_PRIVATE_KEY_PEM}` from .env | Signs DSP access and transfer tokens. Not published in DID. |
+| `wallet.private_key_pem` | `${PARTY_*_WALLET_PRIVATE_KEY_PEM}` from .env | Signs SI tokens, presentations, and credentials. Published in DID as `#keys-1`. |
+| `federation.<name>.did` | `${PARTY_*_DID_HOST}` from .env | Peer's DID (resolved from their DID document) |
+| `issuer_url` | hardcoded | walt.id issuer endpoint |
+| `allowed_issuers` | hardcoded | List of trusted issuers |
+| `wallet.sts_client_id` / `sts_client_secret` | from .env | STS credentials for token exchange |
 
-To generate fresh keys:
+### Environment-Driven Configuration
+
+All sensitive and environment-specific values come from `.env`:
+
+```bash
+# From .env
+ENFORCE_HTTPS=false                    # localhost or HTTPS
+PARTY_A_NGROK_DOMAIN=...             # (for HTTPS mode)
+PARTY_A_PRIVATE_KEY_PEM=...           # EC P-256 key
+PARTY_A_WALLET_PRIVATE_KEY_PEM=...    # EC P-256 key
+```
+
+Generated addresses (localhost default):
+- `http://party-a-connector:3000` → DID: `did:web:party-a-connector%3A3000`
+- `http://party-b-connector:3000` → DID: `did:web:party-b-connector%3A3000`
+
+(With ENFORCE_HTTPS=true, uses HTTPS ngrok domains instead — see `.env.sample`)
+
+### Generating Fresh Keys
+
+To generate new EC P-256 keypairs:
 
 ```sh
 cargo run --bin keygen --features keygen
 ```
 
-It prints a PKCS#8 PEM (newlines escaped, ready to paste) then the matching JWK. Only
-the PEM is needed; the public half is derived from it. Run it twice — the two keys are
-deliberately different, so that leaking the token key cannot be used to impersonate the
-participant's credentials.
+Output: PKCS#8 PEM (newlines escaped for .env) + JWK. Copy the PEM into `.env`:
 
-Replacing `wallet.private_key_pem` changes the published identity key, which
-invalidates any credential already issued to that wallet. Re-seed with step 2.
+```bash
+PARTY_A_PRIVATE_KEY_PEM="-----BEGIN PRIVATE KEY-----\r\n..."
+PARTY_A_WALLET_PRIVATE_KEY_PEM="-----BEGIN PRIVATE KEY-----\r\n..."
+```
 
-## Alternative: self-issued credentials
+Then regenerate configs:
+```sh
+./setup-configs.sh
+```
 
-A connector is also a DCP issuer, so the parties can issue to each other with no
-external issuer at all. Trust here is configuration rather than a third party, so it
-is a fallback rather than the demo path — add the party DIDs to `allowed_issuers` in
-**both** configs first:
+**Note:** Changing `wallet.private_key_pem` invalidates credentials issued to that key.
+Reseed credentials after rotation.
+
+## Alternative: Self-Issued Credentials
+
+A connector is also a DCP issuer, so parties can issue to each other with no external issuer.
+Trust is configuration rather than a third party, so this is a fallback.
+
+Edit connector config (or templates before regenerating) to add party DIDs to `allowed_issuers`:
 
 ```json
 "allowed_issuers": [
@@ -117,16 +212,28 @@ is a fallback rather than the demo path — add the party DIDs to `allowed_issue
 ]
 ```
 
+Request a credential:
 ```sh
 curl -X POST http://localhost:23000/api/credentials/v1/request \
   -H 'content-type: application/json' \
   -d '{"issuerDid":"did:web:party-a-connector%3A3000"}'
 ```
 
-This returns `202`: unlike the OID4VCI redeem, delivery is an asynchronous push, so
-poll `GET /api/credentials/v1/credentials` until it lands. An issuer can also push an
-offer with `POST /api/issuance/v1/offer -d '{"holderDid":"…"}'`, which triggers the
-same exchange.
+Returns `202` — delivery is asynchronous push. Poll until credential lands:
+```sh
+curl -s http://localhost:23000/api/credentials/v1/credentials | jq
+```
+
+An issuer can also push an offer:
+```sh
+curl -X POST http://localhost:13000/api/issuance/v1/offer \
+  -H 'content-type: application/json' \
+  -d '{"holderDid":"did:web:party-b-connector%3A3000"}'
+```
+
+---
+
+For HTTPS testing with NGrok, configure `ENFORCE_HTTPS=true` in `.env`, then regenerate configs with `./setup-configs.sh`.
 
 ---
 

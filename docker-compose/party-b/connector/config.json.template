@@ -1,0 +1,22 @@
+{
+  "participant_info": {
+    "id": "Participant B",
+    "external_address": "${PARTY_B_EXTERNAL_ADDRESS}"
+  },
+  "private_key_pem": "${PARTY_B_PRIVATE_KEY_PEM}",
+  "issuer_url": "http://issuer:7002",
+  "allowed_issuers": [
+    "did:web:issuer-did-server"
+  ],
+  "federation": {
+    "party-a": {
+      "did": "did:web:${PARTY_A_DID_HOST}"
+    }
+  },
+  "wallet": {
+    "private_key_pem": "${PARTY_B_WALLET_PRIVATE_KEY_PEM}",
+    "credential_store_path": "${WALLET_CREDENTIAL_STORE_PATH}",
+    "sts_client_id": "${WALLET_STS_CLIENT_ID}",
+    "sts_client_secret": "${WALLET_STS_CLIENT_SECRET}"
+  }
+}

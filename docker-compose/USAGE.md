@@ -1,17 +1,23 @@
-# Using the connectors to negotiate contracts and transfer data assets
+# Using the Connectors to Negotiate Contracts and Transfer Data Assets
 
-## Catalog sync
+## Prerequisites
 
-The connector for `party-a` provides a demo dataset, which can be found under `party-a/data/datasets`. Upon syncing
-the catalogs, `party-b` will discover and download the demo dataset and will persist it under
+Follow [SETUP.md](SETUP.md) to:
+1. Generate configuration: `./setup-configs.sh`
+2. Start services: `docker-compose up -d`
+3. Seed credentials into both connectors
+
+## Catalog Sync
+
+The connector for `party-a` provides a demo dataset under `party-a/data/datasets`. 
+Upon syncing catalogs, `party-b` will discover and download the demo dataset to 
 `party-b/data/datasets/federated/party-a`.
 
 Sync authenticates like any other DSP call, so it only succeeds once both connectors
-hold a credential — finish [SETUP.md](SETUP.md) step 2 first. On a freshly started
-stack the first sync runs before the credentials are seeded and logs
-`Failed to retrieve an access token ... 401`; the next cycle picks it up. Until the
-dataset appears under `federated/party-a`, the negotiation below has nothing to
-negotiate for.
+hold a credential. On a freshly started stack, the first sync runs before credentials 
+are seeded and logs `Failed to retrieve an access token ... 401`; the next cycle picks 
+it up. Until the dataset appears under `federated/party-a`, the negotiation below has 
+nothing to negotiate for.
 
 ## Negotiating a contract
 
