@@ -25,7 +25,16 @@ cargo test
 cargo test <name>                   # single test
 
 ./build.sh                          # connector:latest image (compiles inside the image)
+
+# end-to-end over the Docker demo (needs Docker; builds the image, ~1 min)
+cargo test --test e2e_docker -- --ignored --nocapture
 ```
+
+`tests/e2e_docker.rs` is `#[ignore]`d so `cargo test` stays green without Docker. It
+brings the compose stack up from cold, issues a credential from the walt.id issuer over
+OID4VCI, exchanges DCP tokens both ways, then negotiates and pulls the dataset — the
+whole of `SETUP.md` and `USAGE.md`. It tears the stack down and deletes the seeded
+credentials, so don't run it against a stack you are using by hand.
 
 `docker-compose/` runs a two-party demo; see `docker-compose/SETUP.md` and `USAGE.md`.
 Config is loaded from `CONFIG_PATH` (default `config.json`) — the schema is
