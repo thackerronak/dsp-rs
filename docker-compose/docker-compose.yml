@@ -1,7 +1,9 @@
 services:
   # ==========================================
-  # CREDENTIALS ISSUER
+  # CREDENTIALS ISSUER (external, walt.id)
   # ==========================================
+  # The only external identity service left. Each connector runs its own DCP
+  # wallet — holder and verifier — so there is no wallet or verifier container.
   issuer:
     image: ${ISSUER_IMAGE}
     container_name: issuer
@@ -13,6 +15,8 @@ services:
     ports:
       - "7002:7002"
 
+  # Serves the issuer's DID document, so `did:web:issuer-did-server` resolves and
+  # connectors can verify credentials it signed.
   issuer-did-server:
     image: nginx:alpine
     container_name: issuer-did-server
@@ -37,32 +41,6 @@ services:
       - ssi-network
     ports:
       - "13000:3000"
-    depends_on:
-      - party-a-wallet
-      - party-a-verifier
-
-  party-a-wallet:
-    image: ${WALLET_IMAGE}
-    container_name: party-a-wallet
-    # command: ["-l", "trace"]
-    volumes:
-      - ./party-a/wallet/config:/waltid-wallet-api2/config:ro
-      - ./party-a/wallet/data:/data
-    networks:
-      - ssi-network
-    ports:
-      - "17005:7005"
-
-  party-a-verifier:
-    image: ${VERIFIER_IMAGE}
-    container_name: party-a-verifier
-    command: ["-l", "trace"]
-    volumes:
-      - ./party-a/verifier:/waltid-verifier-api2/config:ro
-    networks:
-      - ssi-network
-    ports:
-      - "17003:7003"
 
   # ==========================================
   # PARTY B
@@ -78,33 +56,7 @@ services:
       - ssi-network
     ports:
       - "23000:3000"
-    depends_on:
-      - party-b-wallet
-      - party-b-verifier
-
-  party-b-wallet:
-    image: ${WALLET_IMAGE}
-    container_name: party-b-wallet
-    volumes:
-      - ./party-b/wallet/config:/waltid-wallet-api2/config:ro
-      - ./party-b/wallet/data:/data
-    networks:
-      - ssi-network
-    ports:
-      - "27005:7005"
-
-  party-b-verifier:
-    image: ${VERIFIER_IMAGE}
-    container_name: party-b-verifier
-    command: ["-l", "trace"]
-    volumes:
-      - ./party-b/verifier:/waltid-verifier-api2/config:ro
-    networks:
-      - ssi-network
-    ports:
-      - "27003:7003"
 
 networks:
   ssi-network:
     driver: bridge
-

@@ -323,3 +323,43 @@ impl<T: Store> FromRef<AppState<T>> for AppStateReverseProxy<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The demo configs are the easiest thing to break silently — a stale key, a
+    /// missing field, or a wallet section that no longer matches `Configuration`
+    /// only shows up when someone runs the stack. Parse them here instead.
+    #[test]
+    fn test_demo_configs_parse() {
+        for party in ["a", "b"] {
+            let path = format!("docker-compose/party-{party}/connector/config.json");
+            let data = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+            let config: Configuration = serde_json::from_slice(&data)
+                .unwrap_or_else(|e| panic!("{path} does not match Configuration: {e}"));
+
+            // The connector must be able to derive its own did:web from its address.
+            let did = config
+                .participant_info
+                .did_web()
+                .unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert_eq!(did, format!("did:web:party-{party}-connector%3A3000"));
+
+            // The signing key must load, or the connector cannot start.
+            KeyPair::from_ec_pem(&config.private_key_pem)
+                .unwrap_or_else(|e| panic!("{path}: private_key_pem invalid: {e}"));
+
+            // The verifier rejects any credential whose issuer is not listed, so an
+            // empty or wrong allowed_issuers is a silently broken demo.
+            assert!(
+                config
+                    .allowed_issuers
+                    .contains(&"did:web:issuer-did-server".to_string()),
+                "{path}: the walt.id issuer DID must be trusted"
+            );
+
+            assert!(!config.issuer_url.is_empty(), "{path}: issuer_url is empty");
+        }
+    }
+}
