@@ -1,0 +1,7 @@
+# The build compiles inside the image; the host's target/ is a large, wrong-platform
+# artifact directory that would only slow the context upload down.
+/target
+/docker-compose
+/docs
+/tck
+.git

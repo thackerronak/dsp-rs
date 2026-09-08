@@ -1,7 +1,7 @@
 #!/bin/sh
+set -e
 
-# build connector binary
-cargo build --target x86_64-unknown-linux-musl --release
-
-# build container
-docker build --platform linux/amd64 -t connector:latest .
+# The Dockerfile is multi-stage: the connector is compiled inside the image, so no musl
+# target or musl linker is needed on the host. No --platform either — the image is built
+# for the host architecture.
+docker build -t connector:latest .

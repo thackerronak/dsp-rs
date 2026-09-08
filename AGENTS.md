@@ -24,7 +24,7 @@ cargo check --features tck          # TCK build must keep compiling
 cargo test
 cargo test <name>                   # single test
 
-./build.sh                          # connector:latest image (needs the musl target)
+./build.sh                          # connector:latest image (compiles inside the image)
 ```
 
 `docker-compose/` runs a two-party demo; see `docker-compose/SETUP.md` and `USAGE.md`.

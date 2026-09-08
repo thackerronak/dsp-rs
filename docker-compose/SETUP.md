@@ -22,6 +22,9 @@ should be a third party, not the connector vouching for itself.
 docker compose -f docker-compose/docker-compose.yml up
 ```
 
+`build.sh` compiles the connector inside the image, so it needs only Docker — no musl
+target or musl linker on the host — and builds for the host architecture.
+
 ## 2. Seed each connector with a credential
 
 The connector redeems an OID4VCI offer itself, signing the holder proof with its own

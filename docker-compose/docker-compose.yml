@@ -32,7 +32,6 @@ services:
   # ==========================================
   party-a-connector:
     image: ${CONNECTOR_IMAGE}
-    platform: linux/amd64
     container_name: party-a-connector
     volumes:
       - ./party-a/connector/config.json:/app/config.json:ro
@@ -47,7 +46,6 @@ services:
   # ==========================================
   party-b-connector:
     image: ${CONNECTOR_IMAGE}
-    platform: linux/amd64
     container_name: party-b-connector
     volumes:
       - ./party-b/connector/config.json:/app/config.json:ro
