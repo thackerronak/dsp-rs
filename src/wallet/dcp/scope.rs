@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::shared::KeyPair;
+use crate::wallet::KeyPair;
 
 const SCOPE_TYPE_PREFIX: &str = "org.eclipse.dspace.dcp.vc.type:";
 const SCOPE_ID_PREFIX: &str = "org.eclipse.dspace.dcp.vc.id:";

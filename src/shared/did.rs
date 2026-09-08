@@ -93,6 +93,17 @@ impl DidDocument {
     }
 }
 
+/// DSP's version metadata endpoint, which every connector must serve.
+pub(crate) const VERSION_ENDPOINT_PATH: &str = "/.well-known/dspace-version";
+
+pub(crate) const CATALOG_SERVICE: &str = "CatalogService";
+pub(crate) const DATA_SERVICE: &str = "DataService";
+
+/// Fragment identifying this connector's `DataService` entry in its own DID document.
+pub(crate) fn data_service_id(did: &str) -> String {
+    format!("{did}#data-service")
+}
+
 pub(crate) fn derive_did_web(address: &str) -> anyhow::Result<String> {
     let url = Url::parse(address)
         .map_err(|err| anyhow::anyhow!("Failed to parse address, error: {err}"))?;

@@ -1,13 +1,12 @@
 use anyhow::Context;
-use jsonwebtoken::{
-    Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode, jwk::Jwk,
-};
-use serde::{Deserialize, Serialize};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode, jwk::Jwk};
+use serde::Serialize;
 
+/// The wallet's signing key. Signs anything a peer verifies, so its public half is
+/// published in the DID document.
 #[derive(Clone)]
 pub(crate) struct KeyPair {
     encoding_key: EncodingKey,
-    decoding_key: DecodingKey,
     public_jwk: Jwk,
 }
 
@@ -17,22 +16,15 @@ impl KeyPair {
             .context("Failed to decode private key format")?;
         let jwk = Jwk::from_encoding_key(&encoding_key, Algorithm::ES256)
             .context("Failed to convert encoding key to jwk")?;
-        let decoding_key = DecodingKey::from_jwk(&jwk).context("Failed to create decoding key")?;
 
         Ok(Self {
             encoding_key,
-            decoding_key,
             public_jwk: jwk,
         })
     }
 
     pub(crate) fn public_jwk(&self) -> &Jwk {
         &self.public_jwk
-    }
-
-    pub(crate) fn encode<T: Serialize>(&self, claims: T) -> anyhow::Result<String> {
-        let header = Header::new(Algorithm::ES256);
-        encode(&header, &claims, &self.encoding_key).map_err(anyhow::Error::msg)
     }
 
     pub(crate) fn encode_with_kid<T: Serialize>(
@@ -59,17 +51,6 @@ impl KeyPair {
         header.kid = Some(kid);
         header.typ = Some(typ.to_string());
         encode(&header, &claims, &self.encoding_key).map_err(anyhow::Error::msg)
-    }
-
-    pub(crate) fn decode<T>(&self, token: &str) -> anyhow::Result<T>
-    where
-        T: for<'de> Deserialize<'de>,
-    {
-        let token_data = {
-            let validation = Validation::new(Algorithm::ES256);
-            decode::<T>(&token, &self.decoding_key, &validation)?
-        };
-        Ok(token_data.claims)
     }
 }
 

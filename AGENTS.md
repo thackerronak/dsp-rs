@@ -73,8 +73,9 @@ instead of reaching across.
 ```
 src/
 ├── main.rs            # entrypoint, AppError -> HTTP mapping
-├── shared/            # KeyPair, DID-document types, did:web helpers
+├── shared/            # DID-document types, did:web helpers
 ├── wallet/            # the wallet, depends only on shared/
+│   ├── key_pair.rs    # credential signing key (sign-only, published in did.json)
 │   ├── store.rs       # credential store (0600 files) — protocol-agnostic
 │   ├── did.rs         # DidResolver trait + did:web over HTTP
 │   ├── dcp/           # Decentralized Claims Protocol 1.0
@@ -88,7 +89,7 @@ src/
 │   └── oid4vc/        # OpenID for Verifiable Credentials
 │       └── vci.rs     # OID4VCI: redeem a credential offer from an external issuer
 ├── auth/              # Authenticator (concrete), /auth/token verifier, AuthClaims
-├── connector/         # start(), build_app(), Configuration, AppState
+├── connector/         # start(), build_app(), Configuration, AppState, TokenKeyPair
 ├── catalog/ negotiation/ transfer/   # DSP handlers (consumer.rs / provider.rs)
 ├── policy_engine/     # policy evaluation
 ├── reverse_proxy/     # /pull data-plane proxy
@@ -127,3 +128,7 @@ presented credential. See `docs/limitations.md` for the known gaps.
   Cross-connector tests use loopback `TcpListener` + `build_app`.
 - DSP wire types: explicit serde `rename`/`camelCase`, matching the spec JSON.
 - No secrets in logs or URLs.
+- Two signing keys, and two types so they can't be crossed: `TokenKeyPair`
+  (`connector/app_state.rs`, from `private_key_pem`) signs and validates DSP
+  access/transfer tokens; `wallet::KeyPair` (from `wallet.private_key_pem`) signs
+  anything a peer verifies and is the key published in `did.json`.

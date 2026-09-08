@@ -13,8 +13,11 @@ use axum::http::{HeaderMap, header::AUTHORIZATION};
 
 pub(crate) mod dcp;
 pub(crate) mod did;
+pub(crate) mod key_pair;
 pub(crate) mod oid4vc;
 pub(crate) mod store;
+
+pub(crate) use key_pair::KeyPair;
 
 #[cfg(test)]
 pub(crate) mod test_support;

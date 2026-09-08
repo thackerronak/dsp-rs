@@ -4,7 +4,7 @@ use chrono::Utc;
 use jsonwebtoken::{Algorithm, Validation, dangerous::insecure_decode, decode};
 use serde::{Deserialize, Serialize};
 
-use crate::{shared::KeyPair, wallet::did::DidResolver};
+use crate::wallet::{KeyPair, did::DidResolver};
 
 const SI_TOKEN_TTL_SECS: i64 = 300;
 

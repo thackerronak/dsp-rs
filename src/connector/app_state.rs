@@ -2,8 +2,11 @@ use std::{collections::HashMap, env, sync::Arc};
 
 use anyhow::Context;
 use axum::extract::FromRef;
+use jsonwebtoken::{
+    Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode, jwk::Jwk,
+};
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::{
     fs,
     sync::mpsc::{Receiver, Sender, channel},
@@ -13,15 +16,17 @@ use crate::{
     auth::{Authenticator, WalletConfig},
     connector::validator::SchemaValidator,
     negotiation::NegotiationEvent,
-    shared::{KeyPair, derive_did_web},
+    shared::derive_did_web,
     store::Store,
     transfer::TransferEvent,
-    wallet::{did::HttpDidResolver, store::FileCredentialStore},
+    wallet::{KeyPair, did::HttpDidResolver, store::FileCredentialStore},
 };
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct RemoteConnector {
-    pub(crate) remote_address: String,
+    // The peer's DSP endpoint is read from the `DataService` entry in its DID document,
+    // so the address is discovered rather than configured.
+    pub(crate) did: String,
 
     #[serde(default = "default_sync_interval")]
     pub(crate) sync_interval_secs: u64,
@@ -56,8 +61,8 @@ impl ParticipantInfo {
 struct Configuration {
     participant_info: ParticipantInfo,
 
-    // Used for signing access tokens. This is the same private key as used inside the wallet. The
-    // corresponding public key is made available as DID.
+    // Signs DSP access and transfer tokens. Self-issued and self-validated, so it is
+    // not published in the DID document.
     private_key_pem: String,
 
     // walt.id issuer, used to redeem credential offers over OID4VCI.
@@ -67,13 +72,15 @@ struct Configuration {
 
     federation: HashMap<String, RemoteConnector>,
 
-    /// Accepts the legacy key `"dcp"` so existing config files keep working.
-    #[serde(default, alias = "dcp")]
     wallet: WalletSettings,
 }
 
 #[derive(Debug, Deserialize)]
 struct WalletSettings {
+    // Signs everything a peer verifies, and is published in the DID document as
+    // `#keys-1`. Credentials are bound to it, so replacing it invalidates them.
+    private_key_pem: String,
+
     #[serde(default = "default_credential_store_path")]
     credential_store_path: String,
 
@@ -92,18 +99,6 @@ struct WalletSettings {
     sts_client_secret: Option<String>,
 }
 
-impl Default for WalletSettings {
-    fn default() -> Self {
-        Self {
-            credential_store_path: default_credential_store_path(),
-            credential_service_path: default_credential_service_path(),
-            issuance_service_path: default_issuance_service_path(),
-            sts_client_id: None,
-            sts_client_secret: None,
-        }
-    }
-}
-
 fn default_credential_store_path() -> String {
     "data/credentials".to_string()
 }
@@ -114,6 +109,42 @@ fn default_credential_service_path() -> String {
 
 fn default_issuance_service_path() -> String {
     "/api/issuance/v1".to_string()
+}
+
+/// Signs and validates DSP access and transfer tokens. Both sides of that are this
+/// process, so it holds a decoding key and is never published.
+#[derive(Clone)]
+pub(crate) struct TokenKeyPair {
+    encoding_key: EncodingKey,
+    decoding_key: DecodingKey,
+}
+
+impl TokenKeyPair {
+    pub(crate) fn from_ec_pem(private_key_pem: &str) -> anyhow::Result<Self> {
+        let encoding_key = EncodingKey::from_ec_pem(private_key_pem.as_bytes())
+            .context("Failed to decode private key format")?;
+        let jwk = Jwk::from_encoding_key(&encoding_key, Algorithm::ES256)
+            .context("Failed to convert encoding key to jwk")?;
+        let decoding_key = DecodingKey::from_jwk(&jwk).context("Failed to create decoding key")?;
+
+        Ok(Self {
+            encoding_key,
+            decoding_key,
+        })
+    }
+
+    pub(crate) fn encode<T: Serialize>(&self, claims: T) -> anyhow::Result<String> {
+        let header = Header::new(Algorithm::ES256);
+        encode(&header, &claims, &self.encoding_key).map_err(anyhow::Error::msg)
+    }
+
+    pub(crate) fn decode<T>(&self, token: &str) -> anyhow::Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let validation = Validation::new(Algorithm::ES256);
+        Ok(decode::<T>(token, &self.decoding_key, &validation)?.claims)
+    }
 }
 
 pub(crate) struct AppState<T: Store> {
@@ -154,7 +185,10 @@ impl<T: Store> AppState<T> {
         let config: Configuration =
             serde_json::from_slice(&data).context("Failed to deserialize config")?;
 
-        let key_pair = KeyPair::from_ec_pem(&config.private_key_pem)?;
+        let token_key_pair = TokenKeyPair::from_ec_pem(&config.private_key_pem)
+            .context("private_key_pem (DSP token signing key)")?;
+        let credential_key_pair = KeyPair::from_ec_pem(&config.wallet.private_key_pem)
+            .context("wallet.private_key_pem (credential signing key)")?;
         let client = Client::new();
 
         let local_did = config.participant_info.did_web()?;
@@ -166,7 +200,8 @@ impl<T: Store> AppState<T> {
             .zip(config.wallet.sts_client_secret);
 
         let authenticator = Authenticator::new(WalletConfig {
-            key_pair: key_pair.clone(),
+            token_key_pair,
+            credential_key_pair,
             local_did,
             kid,
             allowed_issuers: config.allowed_issuers,
@@ -331,7 +366,7 @@ mod tests {
     use serde_json::json;
 
     /// The demo configs are the easiest thing to break silently — a stale key, a
-    /// missing field, or a wallet section that no longer matches `Configuration`
+    /// missing field, or a wallet section that does not match `Configuration`
     /// only shows up when someone runs the stack. Parse them here instead.
     #[test]
     fn test_demo_configs_parse() {
@@ -348,9 +383,16 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{path}: {e}"));
             assert_eq!(did, format!("did:web:party-{party}-connector%3A3000"));
 
-            // The signing key must load, or the connector cannot start.
-            KeyPair::from_ec_pem(&config.private_key_pem)
+            // Both signing keys must load, or the connector cannot start. They must
+            // also differ: sharing one key defeats the point of splitting them.
+            TokenKeyPair::from_ec_pem(&config.private_key_pem)
                 .unwrap_or_else(|e| panic!("{path}: private_key_pem invalid: {e}"));
+            KeyPair::from_ec_pem(&config.wallet.private_key_pem)
+                .unwrap_or_else(|e| panic!("{path}: wallet.private_key_pem invalid: {e}"));
+            assert_ne!(
+                config.private_key_pem, config.wallet.private_key_pem,
+                "{path}: token and credential keys must be different"
+            );
 
             // The verifier rejects any credential whose issuer is not listed, so an
             // empty or wrong allowed_issuers is a silently broken demo.
@@ -376,10 +418,9 @@ mod tests {
         }
     }
 
-    /// The section was called `dcp` before the wallet grew a second exchange protocol.
-    /// Existing config files must keep working.
+    /// The wallet section carries the credential key, so it cannot be defaulted away.
     #[test]
-    fn test_legacy_dcp_config_key_still_parses() {
+    fn test_config_without_wallet_section_is_rejected() {
         let data = json!({
             "participant_info": {
                 "id": "Participant A",
@@ -388,17 +429,10 @@ mod tests {
             "private_key_pem": "unused-here",
             "issuer_url": "http://issuer:7002",
             "allowed_issuers": ["did:web:issuer-did-server"],
-            "federation": {},
-            "dcp": {
-                "credential_store_path": "/app/data/credentials",
-                "sts_client_id": "dsp-client",
-                "sts_client_secret": "dsp-secret"
-            }
+            "federation": {}
         });
 
-        let config: Configuration = serde_json::from_value(data).expect("legacy key parses");
-
-        assert_eq!(config.wallet.credential_store_path, "/app/data/credentials");
-        assert_eq!(config.wallet.sts_client_id.as_deref(), Some("dsp-client"));
+        serde_json::from_value::<Configuration>(data)
+            .expect_err("a config with no wallet section must not load");
     }
 }

@@ -81,7 +81,9 @@ or an issuer missing from `allowed_issuers`.
 
 | Key | Meaning |
 |---|---|
-| `private_key_pem` | Signs SI tokens, presentations and access tokens. Its public half is published in the connector's DID document. |
+| `private_key_pem` | Signs DSP access and transfer tokens. Self-issued and self-validated, so it is **not** published in the DID document. |
+| `wallet.private_key_pem` | Signs SI tokens, presentations, issued credentials and OID4VCI holder proofs. Its public half is published in the DID document as `#keys-1`. Required. |
+| `federation.<name>.did` | The peer's DID. Its DSP endpoint is resolved from the `DataService` entry in its DID document, so no address is configured. |
 | `issuer_url` | The walt.id issuer. An offer naming a different issuer is refused. |
 | `allowed_issuers` | Whose credentials the verifier accepts. `did:web:issuer-did-server` is the walt.id issuer. |
 | `wallet.sts_client_id` / `sts_client_secret` | Enable the STS used in step 3. Omit both and it is not mounted — there are no default credentials. |
@@ -93,7 +95,12 @@ cargo run --bin keygen --features keygen
 ```
 
 It prints a PKCS#8 PEM (newlines escaped, ready to paste) then the matching JWK. Only
-the PEM is needed; the public half is derived from it.
+the PEM is needed; the public half is derived from it. Run it twice — the two keys are
+deliberately different, so that leaking the token key cannot be used to impersonate the
+participant's credentials.
+
+Replacing `wallet.private_key_pem` changes the published identity key, which
+invalidates any credential already issued to that wallet. Re-seed with step 2.
 
 ## Alternative: self-issued credentials
 

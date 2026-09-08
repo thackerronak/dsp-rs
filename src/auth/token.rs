@@ -55,7 +55,7 @@ pub(super) async fn auth_token(
 
     let vp_jwt = query_peer_presentation(
         &wallet.client,
-        &wallet.key_pair,
+        &wallet.credential_key_pair,
         &wallet.local_did,
         &wallet.kid,
         &peer_did,

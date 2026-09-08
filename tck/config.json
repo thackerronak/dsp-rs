@@ -9,5 +9,8 @@
   "allowed_issuers": [],
   "wallet_url": "",
   "wallet_id": "",
-  "federation": {}
+  "federation": {},
+  "wallet": {
+    "private_key_pem": "-----BEGIN PRIVATE KEY-----\r\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgOLhFoYt4aTJPYhB1\r\nxXg3gfG89YtndEF8nsUw6qc8sLehRANCAARchX5jJbVHUbfxdOYi4EgblpzYpImY\r\n1HlN/B9GVre4HOhDn1TYnpWsX/J6AU5I5v6VxFXqzLU9GW67PG+kxkHp\r\n-----END PRIVATE KEY-----"
+  }
 }

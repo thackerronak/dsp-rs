@@ -10,22 +10,19 @@ use axum::{
 use reqwest::Client;
 use serde_json::Value;
 
-use crate::{
-    shared::KeyPair,
-    wallet::{
-        bearer_token,
-        dcp::{
-            model::{
-                CredentialMessage, CredentialOfferMessage, CredentialReference,
-                CredentialRequestMessage, DCP_CONTEXT, PresentationQueryMessage,
-                PresentationResponseMessage,
-            },
-            scope::{ScopeQuery, mint_jwt_vp},
-            si_token::{ReplayCache, build_si_token, validate_si_token},
+use crate::wallet::{
+    KeyPair, bearer_token,
+    dcp::{
+        model::{
+            CredentialMessage, CredentialOfferMessage, CredentialReference,
+            CredentialRequestMessage, DCP_CONTEXT, PresentationQueryMessage,
+            PresentationResponseMessage,
         },
-        did::DidResolver,
-        store::{CredentialStore, StoredCredential},
+        scope::{ScopeQuery, mint_jwt_vp},
+        si_token::{ReplayCache, build_si_token, validate_si_token},
     },
+    did::DidResolver,
+    store::{CredentialStore, StoredCredential},
 };
 
 #[derive(Clone)]

@@ -55,24 +55,31 @@ When a consumer calls `POST /catalog/request`, the handler (`catalog_request`,
 ## Discovery: how a consumer knows a producer exists
 
 **The DSP protocol does not define global discovery.** It only says *how to ask an
-already-known producer for its catalog* — it assumes you already have the
-counterparty's connector URL. In this repo, that gap is filled by
+already-known producer for its catalog*. In this repo, that gap is filled by
 **pre-configured federation + periodic catalog sync** (a pull model):
 
-1. **Configure who to sync from.** The consumer's `config.json` lists known
-   producers in a `federation` block
+1. **Configure whose identity to sync from.** The consumer's `config.json` lists known
+   producers by **DID** in a `federation` block
    (`docker-compose/party-b/connector/config.json`):
    ```json
-   "federation": { "party-a": { "remote_address": "http://party-a-connector:3000" } }
+   "federation": { "party-a": { "did": "did:web:party-a-connector%3A3000" } }
    ```
-   An admin put that address there — *that* is "how it knows."
-2. **Sync on a timer.** On startup `catalog_sync` (`src/catalog/sync.rs`) spawns one
-   task per federated connector. Each task periodically: checks the producer's
-   version (`/.well-known/dspace-version`), gets a token
+   An admin put that DID there — *that* is "how it knows." The connector's *address*
+   is not configured; it is resolved.
+2. **Resolve the endpoint.** Each sync resolves the producer's DID document and reads
+   the `DataService` entry, which names the producer's `/.well-known/dspace-version`
+   endpoint. Stripping that path yields the DSP `<root>`. This is DSP's [service
+   endpoint discovery](https://w3id.org/dspace/2025/1), and it means the producer can
+   move its connector — a different host, a path prefix — without any consumer
+   changing config. Resolution happens every tick, so a move is picked up on the next
+   sync rather than at restart.
+3. **Sync on a timer.** On startup `catalog_sync` (`src/catalog/sync.rs`) spawns one
+   task per federated connector. Each task periodically: resolves the root as above,
+   selects a supported version from that version endpoint, gets a token
    ([Stage 2](auth-and-identity.md)), calls the producer's `POST /catalog/request`,
    and **caches** the datasets locally as *federated datasets*
    (`save_federated_dataset` → `data/datasets/federated/<name>/`).
-3. **Negotiate against the cache.** `POST /api-internal/negotiate {"name":"party-a"}`
+4. **Negotiate against the cache.** `POST /api-internal/negotiate {"name":"party-a"}`
    looks up the cached federated dataset and starts [Stage 3](negotiation.md).
 
 ```
@@ -91,7 +98,7 @@ Producer (party-a)                  Consumer (party-b)
 
 | Approach | How discovery works |
 |----------|--------------------|
-| **This repo** | Static `federation` config + periodic catalog sync (you must know the address) |
+| **This repo** | Static `federation` config listing peer **DIDs**, endpoints resolved from each DID document, then periodic catalog sync (you must know *who*, not *where*) |
 | **Catena-X** | Central **Discovery Finder** + **BPN Discovery Service** resolve a partner's **BPN → connector URL**, plus a **Digital Twin Registry** and federated-catalog crawlers |
 | **Gaia-X / IDS** | A **Federated Catalogue / Broker** where participants register self-descriptions and others query centrally |
 

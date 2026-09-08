@@ -14,20 +14,16 @@ use chrono::Utc;
 use reqwest::Client;
 use serde_json::{Value, json};
 
-use crate::{
-    shared::KeyPair,
-    wallet::{
-        bearer_token,
-        dcp::{
-            model::{
-                CredentialContainer, CredentialMessage, CredentialObject, CredentialOfferMessage,
-                CredentialRequestMessage, CredentialRequestStatusMessage, DCP_CONTEXT,
-                IssuerMetadata,
-            },
-            si_token::{ReplayCache, build_si_token, validate_si_token},
+use crate::wallet::{
+    KeyPair, bearer_token,
+    dcp::{
+        model::{
+            CredentialContainer, CredentialMessage, CredentialObject, CredentialOfferMessage,
+            CredentialRequestMessage, CredentialRequestStatusMessage, DCP_CONTEXT, IssuerMetadata,
         },
-        did::DidResolver,
+        si_token::{ReplayCache, build_si_token, validate_si_token},
     },
+    did::DidResolver,
 };
 
 const IDENTITY_CREDENTIAL_TYPE: &str = "identity_credential";

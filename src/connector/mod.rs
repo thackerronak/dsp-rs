@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::FromRef,
+    extract::{FromRef, State},
     routing::{any, get},
 };
 use reqwest::Client;
@@ -14,12 +14,16 @@ use crate::{
     auth,
     catalog::{self, sync::catalog_sync},
     connector::{
-        app_state::{AppState, AppStateCatalog, AppStateNegotiation, AppStateTransfer},
+        app_state::{
+            AppState, AppStateAuthentication, AppStateCatalog, AppStateNegotiation,
+            AppStateTransfer,
+        },
         validator::{HasSchemaName, SchemaValidator, ValidatedResponseExt},
     },
     model::metadata::{Auth, ProtocolVersion, VersionResponse},
     negotiation::{self, handle_negotiations},
     reverse_proxy,
+    shared::data_service_id,
     store::{Store, file_store::FileStore},
     transfer::{self, handle_transfers},
 };
@@ -156,14 +160,18 @@ where
     info!("Terminated API server");
 }
 
-async fn versions() -> Json<VersionResponse> {
+async fn versions(State(state): State<AppStateAuthentication>) -> Json<VersionResponse> {
     let versions = VersionResponse {
         protocol_versions: vec![ProtocolVersion {
             version: "2025-1".to_owned(),
             path: DSP_API_PATH_2025_1.to_owned(),
             binding: "HTTPS".to_owned(),
             identifier_type: Some("did:web".into()),
-            service_id: None,
+            service_id: state
+                .participant_info
+                .did_web()
+                .ok()
+                .map(|did| data_service_id(&did)),
             auth: Some(Auth {
                 protocol: "DSP-RS-AUTH".into(),
                 version: "1.0".into(),

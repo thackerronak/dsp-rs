@@ -14,10 +14,14 @@ use tracing::debug;
 use crate::{
     AppError,
     auth::{extractor::AuthClaims, model::CredentialData},
-    connector::app_state::{AppState, AppStateAuthentication},
-    shared::KeyPair,
+    connector::{
+        DSP_API_PATH_2025_1,
+        app_state::{AppState, AppStateAuthentication, TokenKeyPair},
+    },
+    shared::{CATALOG_SERVICE, DATA_SERVICE, DidDocument, VERSION_ENDPOINT_PATH, data_service_id},
     store::Store,
     wallet::{
+        KeyPair,
         dcp::{
             holder::{self, HolderState},
             issuer::{self, IssuerState},
@@ -44,7 +48,10 @@ struct TokenResponse {
 
 /// Everything needed to stand up the connector's wallet.
 pub(crate) struct WalletConfig {
-    pub(crate) key_pair: KeyPair,
+    /// Signs DSP access and transfer tokens; never published.
+    pub(crate) token_key_pair: TokenKeyPair,
+    /// Signs everything a peer verifies; published in the DID document under `kid`.
+    pub(crate) credential_key_pair: KeyPair,
     pub(crate) local_did: String,
     pub(crate) kid: String,
     pub(crate) allowed_issuers: Vec<String>,
@@ -67,7 +74,8 @@ pub(crate) struct WalletConfig {
 /// Concrete on purpose — there is a single implementation, so there is no backend trait
 /// and no downcast in the request path.
 pub(crate) struct Authenticator {
-    key_pair: KeyPair,
+    token_key_pair: TokenKeyPair,
+    credential_key_pair: KeyPair,
     local_did: String,
     kid: String,
     allowed_issuers: Vec<String>,
@@ -89,7 +97,7 @@ impl Authenticator {
         let store = config.store;
 
         let holder = HolderState::new(
-            config.key_pair.clone(),
+            config.credential_key_pair.clone(),
             config.local_did.clone(),
             config.kid.clone(),
             config.client.clone(),
@@ -98,7 +106,7 @@ impl Authenticator {
         );
 
         let issuer = IssuerState::new(
-            config.key_pair.clone(),
+            config.credential_key_pair.clone(),
             config.local_did.clone(),
             config.kid.clone(),
             config.client.clone(),
@@ -109,7 +117,7 @@ impl Authenticator {
             .sts_credentials
             .map(|(client_id, client_secret)| {
                 StsState::new(
-                    config.key_pair.clone(),
+                    config.credential_key_pair.clone(),
                     config.local_did.clone(),
                     config.kid.clone(),
                     client_id,
@@ -118,7 +126,7 @@ impl Authenticator {
             });
 
         let oid4vci = Oid4vciState::new(
-            config.key_pair.clone(),
+            config.credential_key_pair.clone(),
             config.local_did.clone(),
             config.kid.clone(),
             config.client.clone(),
@@ -130,13 +138,16 @@ impl Authenticator {
         let local_did_document = build_local_did_document(
             &config.local_did,
             &config.kid,
-            serde_json::to_value(config.key_pair.public_jwk()).unwrap_or(Value::Null),
+            serde_json::to_value(config.credential_key_pair.public_jwk()).unwrap_or(Value::Null),
             &format!("{base}{}", config.credential_service_path),
             &format!("{base}{}", config.issuance_service_path),
+            &format!("{base}{DSP_API_PATH_2025_1}/catalog"),
+            &format!("{base}{VERSION_ENDPOINT_PATH}"),
         );
 
         Self {
-            key_pair: config.key_pair,
+            token_key_pair: config.token_key_pair,
+            credential_key_pair: config.credential_key_pair,
             local_did: config.local_did,
             kid: config.kid,
             allowed_issuers: config.allowed_issuers,
@@ -171,7 +182,7 @@ impl Authenticator {
         };
 
         let si_token = build_si_token(
-            &self.key_pair,
+            &self.credential_key_pair,
             self.local_did.clone(),
             target_did,
             self.kid.clone(),
@@ -188,6 +199,11 @@ impl Authenticator {
 
         let token_resp: TokenResponse = response.json().await?;
         Ok(token_resp.access_token)
+    }
+
+    /// Resolve a peer's DID document.
+    pub(crate) async fn resolve_peer(&self, did: &str) -> anyhow::Result<DidDocument> {
+        self.resolver.resolve(did).await
     }
 
     /// Resolve a DID document; the connector's own is served from memory.
@@ -227,7 +243,7 @@ impl Authenticator {
         claims.data.insert("iss".into(), Value::String(iss_did_web));
         claims.data.insert("sub".into(), Value::String(sub_did_web));
 
-        self.key_pair.encode(&claims).map(Some)
+        self.token_key_pair.encode(&claims).map(Some)
     }
 
     pub(crate) fn new_transfer_token(
@@ -241,11 +257,11 @@ impl Authenticator {
             .data
             .insert("iss".to_string(), Value::String(iss_did_web));
 
-        self.key_pair.encode(&claims)
+        self.token_key_pair.encode(&claims)
     }
 
     pub(crate) fn decode(&self, token: &str) -> anyhow::Result<AuthClaims> {
-        self.key_pair.decode(token)
+        self.token_key_pair.decode(token)
     }
 
     /// Credential service, issuance service and STS, all owned by the wallet.
@@ -280,7 +296,8 @@ impl Authenticator {
     ///
     /// Goes through the single real constructor, so tests exercise the production path.
     pub(crate) fn for_test(
-        key_pair: KeyPair,
+        token_key_pair: TokenKeyPair,
+        credential_key_pair: KeyPair,
         local_did: impl Into<String>,
         allowed_issuers: Vec<String>,
         resolver: Arc<dyn DidResolver>,
@@ -291,7 +308,8 @@ impl Authenticator {
 
         Self::new(WalletConfig {
             kid: format!("{local_did}#keys-1"),
-            key_pair,
+            token_key_pair,
+            credential_key_pair,
             local_did,
             allowed_issuers,
             resolver,
@@ -316,6 +334,8 @@ fn build_local_did_document(
     public_jwk: Value,
     credential_endpoint: &str,
     issuer_endpoint: &str,
+    catalog_endpoint: &str,
+    version_endpoint: &str,
 ) -> Value {
     json!({
         "id": local_did,
@@ -338,6 +358,16 @@ fn build_local_did_document(
                 "id": format!("{local_did}#issuer-service"),
                 "type": "IssuerService",
                 "serviceEndpoint": issuer_endpoint
+            },
+            {
+                "id": format!("{local_did}#catalog-service"),
+                "type": CATALOG_SERVICE,
+                "serviceEndpoint": catalog_endpoint
+            },
+            {
+                "id": data_service_id(local_did),
+                "type": DATA_SERVICE,
+                "serviceEndpoint": version_endpoint
             }
         ]
     })

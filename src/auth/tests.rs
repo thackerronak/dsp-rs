@@ -4,8 +4,8 @@ use serde_json::json;
 
 use crate::{
     auth::{Authenticator, extractor::AuthClaims, model::CredentialData},
-    shared::KeyPair,
-    wallet::{store::FileCredentialStore, test_support::SharedResolver},
+    connector::app_state::TokenKeyPair,
+    wallet::{KeyPair, store::FileCredentialStore, test_support::SharedResolver},
 };
 
 const TEST_PRIVATE_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----
@@ -14,16 +14,37 @@ m60MC/g5J+38YsAycU1hukHQg3ehRANCAAQNLDb617BSV/8pn5Z/exH3sS2rMkes
 5ZBcTa62LI1MRsxdz5kut+l2YWH79puf51LHNRSr35RT+smF3DcFjgg3
 -----END PRIVATE KEY-----";
 
+const TEST_TOKEN_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgOLhFoYt4aTJPYhB1
+xXg3gfG89YtndEF8nsUw6qc8sLehRANCAARchX5jJbVHUbfxdOYi4EgblpzYpImY
+1HlN/B9GVre4HOhDn1TYnpWsX/J6AU5I5v6VxFXqzLU9GW67PG+kxkHp
+-----END PRIVATE KEY-----";
+
 fn test_authenticator() -> Authenticator {
     let temp_dir = tempfile::tempdir().expect("temp dir");
 
     Authenticator::for_test(
+        TokenKeyPair::from_ec_pem(TEST_TOKEN_KEY_PEM).expect("valid test key"),
         KeyPair::from_ec_pem(TEST_PRIVATE_KEY_PEM).expect("valid test key"),
         "did:web:party-a",
         Vec::new(),
         Arc::new(SharedResolver::new()),
         Arc::new(FileCredentialStore::new(temp_dir.path().to_path_buf())),
     )
+}
+
+#[test]
+fn test_did_document_publishes_the_credential_key_only() {
+    let published =
+        test_authenticator().local_did_document["verificationMethod"][0]["publicKeyJwk"].clone();
+
+    let jwk = |pem| {
+        serde_json::to_value(KeyPair::from_ec_pem(pem).expect("valid key").public_jwk())
+            .expect("serializes")
+    };
+
+    assert_eq!(published, jwk(TEST_PRIVATE_KEY_PEM));
+    assert_ne!(published, jwk(TEST_TOKEN_KEY_PEM));
 }
 
 fn identity_credential(credential_data: serde_json::Value) -> HashMap<String, CredentialData> {
@@ -110,18 +131,40 @@ fn test_derive_access_token_malformed_identity_returns_none() {
 }
 
 #[test]
-fn test_local_did_document_advertises_wallet_services() {
+fn test_local_did_document_advertises_wallet_and_dsp_services() {
     let authenticator = test_authenticator();
     let document = authenticator.local_did_document.clone();
 
     assert_eq!(document["id"], "did:web:party-a");
     let services = document["service"].as_array().expect("service array");
-    let types: Vec<&str> = services
-        .iter()
-        .filter_map(|s| s["type"].as_str())
-        .collect();
-    assert!(types.contains(&"CredentialService"));
-    assert!(types.contains(&"IssuerService"));
+
+    let endpoint = |r#type: &str| {
+        services
+            .iter()
+            .find(|s| s["type"] == r#type)
+            .unwrap_or_else(|| panic!("no {type} entry", type = r#type))["serviceEndpoint"]
+            .as_str()
+            .expect("string endpoint")
+            .to_string()
+    };
+
+    assert_eq!(endpoint("CredentialService"), "http://party-a/api/credentials/v1");
+    assert_eq!(endpoint("IssuerService"), "http://party-a/api/issuance/v1");
+    assert_eq!(endpoint("CatalogService"), "http://party-a/api/2025/1/catalog");
+
+    // A peer strips the version path off this to get our <root>, so the entry has to
+    // point at the version endpoint and nothing else.
+    assert_eq!(
+        endpoint("DataService"),
+        "http://party-a/.well-known/dspace-version"
+    );
+    assert_eq!(
+        services
+            .iter()
+            .find(|s| s["type"] == "DataService")
+            .expect("DataService entry")["id"],
+        "did:web:party-a#data-service"
+    );
 }
 
 #[test]

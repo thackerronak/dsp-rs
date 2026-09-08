@@ -18,9 +18,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
-use crate::{
-    shared::KeyPair,
-    wallet::store::{CredentialStore, StoredCredential},
+use crate::wallet::{
+    KeyPair,
+    store::{CredentialStore, StoredCredential},
 };
 
 const PRE_AUTHORIZED_GRANT: &str = "urn:ietf:params:oauth:grant-type:pre-authorized_code";

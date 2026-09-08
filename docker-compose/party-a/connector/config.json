@@ -10,10 +10,11 @@
   ],
   "federation": {
     "party-b": {
-      "remote_address": "http://party-b-connector:3000"
+      "did": "did:web:party-b-connector%3A3000"
     }
   },
   "wallet": {
+    "private_key_pem": "-----BEGIN PRIVATE KEY-----\r\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgBWK/vF8CTAlvk/qu\r\nlVRfs/dnJISFCcPH40EmfhYHzDqhRANCAAR8znIXgQe8dgLonAfeACxGHeQ4R3rI\r\nCqi5w97tFWb673VWuwyewgFzXRyrMC8zRpWabSyv2CpIvCxZpvdHKIDe\r\n-----END PRIVATE KEY-----",
     "credential_store_path": "/app/data/credentials",
     "sts_client_id": "dsp-client",
     "sts_client_secret": "dsp-secret"

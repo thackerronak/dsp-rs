@@ -5,8 +5,8 @@ use serde_json::Value;
 
 use crate::{
     shared::DidDocument,
-    shared::KeyPair,
     wallet::{
+        KeyPair,
         dcp::{
             model::{DCP_CONTEXT, PresentationQueryMessage, PresentationResponseMessage},
             si_token::build_si_token,

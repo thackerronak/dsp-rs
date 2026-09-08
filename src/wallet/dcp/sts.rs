@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{shared::KeyPair, wallet::dcp::si_token::build_si_token};
+use crate::wallet::{KeyPair, dcp::si_token::build_si_token};
 
 const TOKEN_TTL_SECS: u64 = 300;
 
