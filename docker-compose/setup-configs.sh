@@ -79,9 +79,9 @@ else
 
   # Set addresses for localhost
   export PARTY_A_EXTERNAL_ADDRESS="http://party-a-connector:3000"
-  export PARTY_A_DID_HOST="party-a-connector:3000"
+  export PARTY_A_DID_HOST="party-a-connector%3A3000"
   export PARTY_B_EXTERNAL_ADDRESS="http://party-b-connector:3000"
-  export PARTY_B_DID_HOST="party-b-connector:3000"
+  export PARTY_B_DID_HOST="party-b-connector%3A3000"
 
   echo "  Party A: $PARTY_A_EXTERNAL_ADDRESS"
   echo "  Party B: $PARTY_B_EXTERNAL_ADDRESS"
@@ -99,6 +99,16 @@ for var in "${common_required_vars[@]}"; do
     exit 1
   fi
 done
+
+# The PEM values carry literal \r\n escape sequences, which sed would expand
+# into real control characters — illegal inside a JSON string. Double the
+# backslashes so the escapes reach config.json intact.
+escape_for_json() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g'; }
+
+PARTY_A_PRIVATE_KEY_PEM=$(escape_for_json "$PARTY_A_PRIVATE_KEY_PEM")
+PARTY_A_WALLET_PRIVATE_KEY_PEM=$(escape_for_json "$PARTY_A_WALLET_PRIVATE_KEY_PEM")
+PARTY_B_PRIVATE_KEY_PEM=$(escape_for_json "$PARTY_B_PRIVATE_KEY_PEM")
+PARTY_B_WALLET_PRIVATE_KEY_PEM=$(escape_for_json "$PARTY_B_WALLET_PRIVATE_KEY_PEM")
 
 echo ""
 echo "Generating Party A connector config..."
