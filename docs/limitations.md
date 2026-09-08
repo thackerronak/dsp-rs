@@ -25,10 +25,31 @@ treat this as a "known gaps" list, not a criticism.
 
 | Item | Detail | Where |
 |------|--------|-------|
-| **External issuance not yet verified against the live issuer** | The OID4VCI redeem client is covered by tests against a mock issuer, and the walt.id issuer now advertises a `jwt_vc_json` configuration and matching profile. That pairing has not been exercised against the real `waltid/issuer-api2:1.0.0` container, so treat the demo's step 2 as unproven until you have run it. | `src/dcp/oid4vci.rs`, `docker-compose/issuer/config/` |
+| **External issuance verified against the live issuer** | Exercised end to end against `waltid/issuer-api2:1.0.0`: the image does advertise `IdentityCredential_jwt_vc_json` with format `jwt_vc_json`, both connectors redeem a pre-authorized offer, and `POST /auth/token` returns `200`. Getting there needed four client-side corrections and one issuer-config correction — see the notes under this table. | `src/dcp/oid4vci.rs`, `docker-compose/issuer/config/` |
 | **SD-JWT credentials unsupported** | `validate_vc` reads a W3C JWT-VC (`vc.credentialSubject`). An IETF SD-JWT VC — disclosures, `_sd` digests, `cnf` key binding — is neither verified nor presented. | `src/dcp/verifier.rs` |
 | **Credential delivery is async with no status** | `/request` and `/offer` return `202`; the credential arrives later via a push to the holder's `/credentials`. There is no way to ask whether a given request succeeded, so callers poll `GET /api/credentials/v1/credentials`. | `src/dcp/holder.rs` |
 | **Self-issuance is the default trust model** | Each connector is also an issuer. That is convenient for a demo but means trust is configuration (`allowed_issuers`), not architecture. A real dataspace puts a third party in the issuer role. | `src/dcp/issuer.rs` |
+| **walt.id needs a W3C-shaped profile** | `waltid/issuer-api2:1.0.0` writes a profile's `credentialData` into the `vc` object more or less verbatim. A flat `credentialData` therefore yields a token with no `vc.credentialSubject` and no top-level `exp`, neither of which `validate_vc` accepts. The profile has to nest the claims under `credentialSubject` itself, and set `issuanceDate`/`expirationDate` so the issuer emits the registered `nbf`/`exp` claims. This is a property of the image, not of the connector. | `docker-compose/issuer/config/issuer2-profiles.conf` |
+
+### What the live issuer required
+
+The image behaves differently from the OID4VCI draft the client was written against.
+For anyone pointing this connector at another issuer, these were the mismatches:
+
+- **The issuer identifier carries a path** (`http://issuer:7002/openid4vci`), so its
+  metadata is at `/.well-known/openid-credential-issuer/openid4vci` — the well-known
+  segment goes after the authority, not after the path (RFC 8615). Concatenating
+  `{issuer}/.well-known/...` 404s.
+- **`pre-authorized_grant_anonymous_access_supported` is `false`**, so the token request
+  must carry a `client_id`; without one the issuer answers `invalid_client`.
+- **The token response carries no `c_nonce`.** The nonce comes from the advertised
+  `nonce_endpoint` instead.
+- **The credential request needs OID4VCI draft-15 `proofs`** (keyed by proof type), not
+  the older single `proof` object; with only `proof` the issuer answers
+  `invalid_proof: Credential request is missing proofs`.
+- **The advertised `scope`, not the credential configuration id, is the DCP credential
+  type.** The configuration id (`IdentityCredential_jwt_vc_json`) names a format; the
+  scope (`identity_credential`) is what a DCP presentation query matches on.
 
 ## Protocol coverage
 

@@ -9,7 +9,7 @@
 //! alternative would be handing the private key to an external wallet to redeem on its
 //! behalf.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
@@ -58,6 +58,18 @@ struct IssuerMetadata {
     authorization_servers: Vec<String>,
     #[serde(default)]
     token_endpoint: Option<String>,
+    /// Newer OID4VCI drafts moved nonce issuance out of the token response and onto a
+    /// dedicated endpoint, which the issuer advertises here.
+    #[serde(default)]
+    nonce_endpoint: Option<String>,
+    #[serde(default)]
+    credential_configurations_supported: HashMap<String, CredentialConfiguration>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CredentialConfiguration {
+    #[serde(default)]
+    scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +82,11 @@ struct TokenResponse {
     access_token: String,
     #[serde(default)]
     c_nonce: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NonceResponse {
+    c_nonce: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -179,52 +196,84 @@ impl Oid4vciState {
         let metadata = fetch_issuer_metadata(&inner.client, &issuer).await?;
         let token_endpoint = resolve_token_endpoint(&inner.client, &issuer, &metadata).await?;
 
+        // `client_id` is required unless the issuer advertises
+        // `pre-authorized_grant_anonymous_access_supported`. walt.id sets that to false
+        // and rejects an anonymous request with `invalid_client`, so identify the holder
+        // by its DID.
         let body = format!(
-            "grant_type={}&pre-authorized_code={}",
+            "grant_type={}&pre-authorized_code={}&client_id={}",
             form_encode(PRE_AUTHORIZED_GRANT),
             form_encode(&grant.pre_authorized_code),
+            form_encode(&inner.holder_did),
         );
 
-        let token: TokenResponse = inner
-            .client
-            .post(&token_endpoint)
-            .header("content-type", "application/x-www-form-urlencoded")
-            .body(body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let token: TokenResponse = json_or_error(
+            inner
+                .client
+                .post(&token_endpoint)
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(body)
+                .send()
+                .await?,
+            "token request",
+        )
+        .await?;
+
+        // Older issuers return `c_nonce` on the token response; newer ones expect the
+        // holder to fetch one from the nonce endpoint instead.
+        let nonce = match token.c_nonce.clone() {
+            Some(nonce) => Some(nonce),
+            None => fetch_nonce(&inner.client, &metadata).await,
+        };
 
         let proof = inner.key_pair.encode_with_header(
             ProofClaims {
                 aud: issuer.clone(),
                 iat: chrono::Utc::now().timestamp(),
-                nonce: token.c_nonce.clone(),
+                nonce,
             },
             inner.kid.clone(),
             PROOF_TYP,
         )?;
 
-        let response: CredentialResponse = inner
-            .client
-            .post(&metadata.credential_endpoint)
-            .bearer_auth(&token.access_token)
-            .json(&json!({
-                "credential_configuration_id": configuration_id,
-                "proof": { "proof_type": "jwt", "jwt": proof }
-            }))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let response: CredentialResponse = json_or_error(
+            inner
+                .client
+                .post(&metadata.credential_endpoint)
+                .bearer_auth(&token.access_token)
+                .json(&json!({
+                    "credential_configuration_id": configuration_id,
+                    // OID4VCI draft 15 replaced the single `proof` object with `proofs`,
+                    // keyed by proof type. walt.id reads only `proofs` and answers
+                    // `invalid_proof: Credential request is missing proofs` without it,
+                    // while older issuers read only `proof` — so send both.
+                    "proof": { "proof_type": "jwt", "jwt": &proof },
+                    "proofs": { "jwt": [&proof] }
+                }))
+                .send()
+                .await?,
+            "credential request",
+        )
+        .await?;
 
         let jwt = response.into_jwt()?;
 
+        // A DCP presentation query names a credential *type*: the verifier asks for
+        // `org.eclipse.dspace.dcp.vc.type:identity_credential` and the holder matches
+        // `credential_type` exactly. The OID4VCI configuration id
+        // (`IdentityCredential_jwt_vc_json`) is a deployment label for the format, not
+        // that type — the value both sides agree on is the configuration's advertised
+        // `scope`. Storing the configuration id left the credential unmatchable, so the
+        // peer returned an empty presentation list.
+        let credential_type = metadata
+            .credential_configurations_supported
+            .get(&configuration_id)
+            .and_then(|config| config.scope.clone())
+            .unwrap_or_else(|| configuration_id.clone());
+
         let stored = StoredCredential {
             id: format!("{issuer}#{configuration_id}"),
-            credential_type: configuration_id,
+            credential_type,
             format: "vc+jwt".to_string(),
             issuer: credential_issuer_did(&jwt).unwrap_or_else(|| issuer.clone()),
             payload: jwt,
@@ -311,14 +360,83 @@ fn raw_query_value<'u>(url: &'u Url, key: &str) -> Option<&'u str> {
         .find_map(|pair| pair.strip_prefix(&format!("{key}=")))
 }
 
+/// `error_for_status` throws the response body away, and that body is exactly where
+/// OAuth and OID4VCI put the reason a request was refused. Keeping it turns an opaque
+/// "400 Bad Request" into a diagnosable error.
+async fn json_or_error<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+    what: &str,
+) -> anyhow::Result<T> {
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+
+    anyhow::ensure!(status.is_success(), "{what} failed with {status}: {body}");
+
+    serde_json::from_str(&body)
+        .map_err(|err| anyhow::anyhow!("{what} returned an unreadable body ({err}): {body}"))
+}
+
+/// An issuer identifier may carry a path — walt.id publishes
+/// `http://host:7002/openid4vci`. RFC 8615 puts the well-known segment immediately after
+/// the authority and appends the issuer's own path *after* it, so the metadata for
+/// `http://host/openid4vci` is at
+/// `http://host/.well-known/openid-credential-issuer/openid4vci` and **not** at
+/// `http://host/openid4vci/.well-known/openid-credential-issuer`. Naive concatenation
+/// 404s against any issuer whose identifier is not bare-origin.
+fn well_known_url(issuer: &str, suffix: &str) -> String {
+    let Ok(url) = Url::parse(issuer) else {
+        return format!("{}/.well-known/{suffix}", issuer.trim_end_matches('/'));
+    };
+
+    let path = url.path().trim_matches('/').to_string();
+    let mut origin = url;
+    origin.set_path("");
+    origin.set_query(None);
+    origin.set_fragment(None);
+    let origin = origin.as_str().trim_end_matches('/');
+
+    if path.is_empty() {
+        format!("{origin}/.well-known/{suffix}")
+    } else {
+        format!("{origin}/.well-known/{suffix}/{path}")
+    }
+}
+
 async fn fetch_issuer_metadata(client: &Client, issuer: &str) -> anyhow::Result<IssuerMetadata> {
-    Ok(client
-        .get(format!("{issuer}/.well-known/openid-credential-issuer"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?)
+    json_or_error(
+        client
+            .get(well_known_url(issuer, "openid-credential-issuer"))
+            .send()
+            .await?,
+        "issuer metadata",
+    )
+    .await
+}
+
+/// Best effort: an issuer that neither returns `c_nonce` nor exposes a nonce endpoint
+/// just gets an unbound proof, which it is free to reject.
+async fn fetch_nonce(client: &Client, metadata: &IssuerMetadata) -> Option<String> {
+    let endpoint = metadata.nonce_endpoint.as_deref()?;
+
+    match client.post(endpoint).send().await {
+        Ok(response) => match response.error_for_status() {
+            Ok(response) => match response.json::<NonceResponse>().await {
+                Ok(nonce) => Some(nonce.c_nonce),
+                Err(err) => {
+                    tracing::warn!("nonce endpoint returned an unreadable body: {err}");
+                    None
+                }
+            },
+            Err(err) => {
+                tracing::warn!("nonce endpoint rejected the request: {err}");
+                None
+            }
+        },
+        Err(err) => {
+            tracing::warn!("nonce endpoint unreachable: {err}");
+            None
+        }
+    }
 }
 
 /// Per OID4VCI the token endpoint lives on the authorization server, which may be the
@@ -339,7 +457,7 @@ async fn resolve_token_endpoint(
         .unwrap_or(issuer)
         .trim_end_matches('/');
 
-    let discovery = format!("{auth_server}/.well-known/oauth-authorization-server");
+    let discovery = well_known_url(auth_server, "oauth-authorization-server");
     if let Ok(response) = client.get(&discovery).send().await
         && let Ok(response) = response.error_for_status()
         && let Ok(metadata) = response.json::<AuthServerMetadata>().await
@@ -356,7 +474,10 @@ async fn resolve_token_endpoint(
 
 #[derive(Debug, Deserialize)]
 struct RedeemRequest {
-    #[serde(alias = "offer_url", alias = "offer")]
+    /// `offerUrl` is what SETUP.md documents and matches the camelCase used across the
+    /// DCP wire types; it was previously rejected with a 422 because only the
+    /// snake_case and bare `offer` spellings were accepted.
+    #[serde(rename = "offerUrl", alias = "offer_url", alias = "offer")]
     offer_url: String,
 }
 
@@ -403,6 +524,11 @@ mod tests {
     const PRE_AUTH_CODE: &str = "pre-auth-code-123";
     const NONCE: &str = "nonce-abc";
     const CONFIG_ID: &str = "IdentityCredential_jwt_vc_json";
+    /// The DCP credential type the verifier's scope query names, advertised by the issuer
+    /// as the credential configuration's `scope`.
+    const CREDENTIAL_SCOPE: &str = "identity_credential";
+    /// walt.id's issuer identifier is not bare-origin.
+    const ISSUER_PATH: &str = "/openid4vci";
 
     #[derive(Clone)]
     struct MockIssuer {
@@ -410,38 +536,65 @@ mod tests {
         seen_proof: Arc<Mutex<Option<String>>>,
     }
 
+    /// Shaped like walt.id: the issuer identifier carries a `/openid4vci` path, so its
+    /// metadata lives at `/.well-known/openid-credential-issuer/openid4vci`; the token
+    /// endpoint is only discoverable through authorization-server metadata; the token
+    /// response carries no `c_nonce`; and anonymous pre-authorized access is refused.
     fn mock_issuer_router(state: MockIssuer) -> Router {
+        // Self-URLs come from the Host header: the server's port is only known once it is
+        // bound, which is after this router is built.
+        fn base(headers: &axum::http::HeaderMap) -> String {
+            let host = headers
+                .get("host")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("127.0.0.1");
+            format!("http://{host}")
+        }
+
         Router::new()
             .route(
-                "/.well-known/openid-credential-issuer",
-                // Self-URLs come from the Host header: the server's port is only known
-                // once it is bound, which is after this router is built.
+                "/.well-known/openid-credential-issuer/openid4vci",
                 get(|headers: axum::http::HeaderMap| async move {
-                    let host = headers
-                        .get("host")
-                        .and_then(|h| h.to_str().ok())
-                        .unwrap_or("127.0.0.1");
-                    let base = format!("http://{host}");
+                    let base = base(&headers);
                     Json(json!({
-                        "credential_issuer": base,
-                        "credential_endpoint": format!("{base}/credential"),
-                        "token_endpoint": format!("{base}/token"),
+                        "credential_issuer": format!("{base}{ISSUER_PATH}"),
+                        "credential_endpoint": format!("{base}{ISSUER_PATH}/credential"),
+                        "nonce_endpoint": format!("{base}{ISSUER_PATH}/nonce"),
+                        "credential_configurations_supported": {
+                            CONFIG_ID: { "format": "jwt_vc_json", "scope": CREDENTIAL_SCOPE }
+                        }
                     }))
                 }),
             )
             .route(
-                "/token",
+                "/.well-known/oauth-authorization-server/openid4vci",
+                get(|headers: axum::http::HeaderMap| async move {
+                    let base = base(&headers);
+                    Json(json!({ "token_endpoint": format!("{base}{ISSUER_PATH}/token") }))
+                }),
+            )
+            .route(
+                "/openid4vci/token",
                 post(|body: String| async move {
                     assert!(
                         body.contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Apre-authorized_code"),
                         "unexpected grant_type in {body}"
                     );
                     assert!(body.contains(PRE_AUTH_CODE), "missing code in {body}");
-                    Json(json!({ "access_token": "issuer-access-token", "c_nonce": NONCE }))
+                    assert!(
+                        body.contains("client_id="),
+                        "anonymous pre-authorized access is refused; expected client_id in {body}"
+                    );
+                    // Deliberately no `c_nonce` — the holder must use the nonce endpoint.
+                    Json(json!({ "access_token": "issuer-access-token" }))
                 }),
             )
             .route(
-                "/credential",
+                "/openid4vci/nonce",
+                post(|| async { Json(json!({ "c_nonce": NONCE })) }),
+            )
+            .route(
+                "/openid4vci/credential",
                 post(
                     |AxumState(s): AxumState<MockIssuer>,
                      headers: axum::http::HeaderMap,
@@ -450,7 +603,16 @@ mod tests {
                             headers.get("authorization").unwrap(),
                             "Bearer issuer-access-token"
                         );
-                        let jwt = body["proof"]["jwt"].as_str().expect("proof jwt").to_string();
+                        // Draft 15 shape: `proofs` keyed by proof type.
+                        let jwt = body["proofs"]["jwt"][0]
+                            .as_str()
+                            .expect("proofs.jwt[0]")
+                            .to_string();
+                        assert_eq!(
+                            body["proof"]["jwt"].as_str(),
+                            Some(jwt.as_str()),
+                            "the legacy `proof` form should carry the same JWT"
+                        );
                         *s.seen_proof.lock().unwrap() = Some(jwt);
                         Json(json!({ "credential": s.vc }))
                     },
@@ -506,7 +668,7 @@ mod tests {
     #[tokio::test]
     async fn test_redeem_stores_credential_and_proves_holder_key() {
         let (server, seen_proof) = spawn_issuer().await;
-        let issuer = server.url("");
+        let issuer = server.url(ISSUER_PATH);
 
         let temp = tempfile::tempdir().unwrap();
         let store = Arc::new(FileCredentialStore::new(temp.path().to_path_buf()));
@@ -517,7 +679,9 @@ mod tests {
         // The issuer recorded against allowed_issuers is the VC's `iss` (a DID),
         // not the HTTPS origin the credential came from.
         assert_eq!(stored.issuer, ISSUER_DID);
-        assert_eq!(stored.credential_type, CONFIG_ID);
+        // The DCP scope query matches on this exactly, so it must be the advertised
+        // scope rather than the OID4VCI configuration id.
+        assert_eq!(stored.credential_type, CREDENTIAL_SCOPE);
         assert_eq!(store.list().await.unwrap().len(), 1);
 
         // The proof must be a holder-signed OID4VCI proof carrying the issuer's nonce.
@@ -535,7 +699,7 @@ mod tests {
     #[tokio::test]
     async fn test_redeem_accepts_offer_url_forms() {
         let (server, _) = spawn_issuer().await;
-        let issuer = server.url("");
+        let issuer = server.url(ISSUER_PATH);
         let encoded = utf8_percent_encode(&offer_json(&issuer), NON_ALPHANUMERIC).to_string();
 
         let temp = tempfile::tempdir().unwrap();
@@ -556,7 +720,7 @@ mod tests {
         let wallet = wallet(store.clone(), "http://issuer.example:9999".to_string());
 
         let err = wallet
-            .redeem(&offer_json(&server.url("")))
+            .redeem(&offer_json(&server.url(ISSUER_PATH)))
             .await
             .expect_err("offer from an unconfigured issuer is refused");
         assert!(
@@ -583,6 +747,25 @@ mod tests {
         assert!(
             err.to_string().contains("pre-authorized code grant"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_well_known_url_inserts_segment_after_authority() {
+        // RFC 8615: the well-known segment follows the authority and the issuer's own
+        // path is appended after it.
+        assert_eq!(
+            well_known_url("http://issuer:7002/openid4vci", "openid-credential-issuer"),
+            "http://issuer:7002/.well-known/openid-credential-issuer/openid4vci"
+        );
+        // A bare-origin issuer keeps the plain form, with or without a trailing slash.
+        assert_eq!(
+            well_known_url("http://issuer:7002", "openid-credential-issuer"),
+            "http://issuer:7002/.well-known/openid-credential-issuer"
+        );
+        assert_eq!(
+            well_known_url("http://issuer:7002/", "oauth-authorization-server"),
+            "http://issuer:7002/.well-known/oauth-authorization-server"
         );
     }
 

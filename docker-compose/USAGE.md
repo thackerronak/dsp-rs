@@ -6,6 +6,13 @@ The connector for `party-a` provides a demo dataset, which can be found under `p
 the catalogs, `party-b` will discover and download the demo dataset and will persist it under
 `party-b/data/datasets/federated/party-a`.
 
+Sync authenticates like any other DSP call, so it only succeeds once both connectors
+hold a credential — finish [SETUP.md](SETUP.md) step 2 first. On a freshly started
+stack the first sync runs before the credentials are seeded and logs
+`Failed to retrieve an access token ... 401`; the next cycle picks it up. Until the
+dataset appears under `federated/party-a`, the negotiation below has nothing to
+negotiate for.
+
 ## Negotiating a contract
 
 `party-b` is assumed to be the consumer, which starts a negotiation for the discovered dataset of `party-a`.
