@@ -9,6 +9,7 @@ use crate::{
         KeyPair,
         dcp::{
             model::{DCP_CONTEXT, PresentationQueryMessage, PresentationResponseMessage},
+            scope::IDENTITY_CREDENTIAL_SCOPE,
             si_token::build_si_token,
         },
         did::DidResolver,
@@ -40,9 +41,7 @@ pub(crate) async fn query_peer_presentation(
     let query = PresentationQueryMessage {
         context: vec![DCP_CONTEXT.to_string()],
         message_type: "PresentationQueryMessage".to_string(),
-        scope: Some(vec![
-            "org.eclipse.dspace.dcp.vc.type:identity_credential".to_string(),
-        ]),
+        scope: Some(vec![IDENTITY_CREDENTIAL_SCOPE.to_string()]),
         presentation_definition: None,
     };
 
@@ -81,19 +80,20 @@ pub(crate) fn validate_vp(
     let mut validation = Validation::new(Algorithm::ES256);
     validation.set_audience(&[expected_verifier_did]);
     validation.set_issuer(&[expected_holder_did]);
-    validation.set_required_spec_claims(&["exp", "aud", "iss", "sub"]);
+    // `sub` is not required on a presentation: the holder presents it, so the binding is
+    // `iss`, which is checked above. Implementations differ here — the Java EDC omits
+    // `sub` entirely — so only check it when the holder chose to send one.
+    validation.set_required_spec_claims(&["exp", "aud", "iss"]);
 
     let token_data = decode::<Value>(vp_jwt, &decoding_key, &validation)?;
     let claims = token_data.claims;
 
-    let sub = claims
-        .get("sub")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("missing sub in VP claims"))?;
-    anyhow::ensure!(
-        sub == expected_holder_did,
-        "VP sub `{sub}` does not match expected holder `{expected_holder_did}`"
-    );
+    if let Some(sub) = claims.get("sub").and_then(Value::as_str) {
+        anyhow::ensure!(
+            sub == expected_holder_did,
+            "VP sub `{sub}` does not match expected holder `{expected_holder_did}`"
+        );
+    }
 
     let vc_array = claims
         .get("vp")
@@ -195,7 +195,72 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(issuer, ISSUER_DID);
-        assert_eq!(subj, subject);
+        // The issuer stamps the holder into the subject on the way out.
+        assert_eq!(subj["email"], subject["email"]);
+        assert_eq!(subj["address"], subject["address"]);
+        assert_eq!(subj["id"], HOLDER_DID);
+    }
+
+    /// The Java EDC's presentations carry no `sub`; the holder is `iss`.
+    #[tokio::test]
+    async fn test_validate_vp_accepts_a_presentation_without_sub() {
+        let key_pair = test_key_pair();
+        let resolver = static_resolver();
+
+        let vc = mint_identity_credential(
+            &key_pair,
+            ISSUER_DID,
+            &kid(ISSUER_DID),
+            HOLDER_DID,
+            json!({ "email": "ops@example.com", "address": { "country": "DE" } }),
+        )
+        .unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let vp = key_pair
+            .encode_with_kid(
+                json!({
+                    "iss": HOLDER_DID,
+                    "aud": ISSUER_DID,
+                    "iat": now,
+                    "nbf": now,
+                    "exp": now + 300,
+                    "jti": uuid::Uuid::new_v4().to_string(),
+                    "vp": {
+                        "@context": ["https://www.w3.org/2018/credentials/v1"],
+                        "type": ["VerifiablePresentation"],
+                        "verifiableCredential": [vc.clone()]
+                    }
+                }),
+                kid(HOLDER_DID),
+            )
+            .unwrap();
+
+        let holder_doc = resolver.resolve(HOLDER_DID).await.unwrap();
+        let extracted = validate_vp(&vp, HOLDER_DID, ISSUER_DID, &holder_doc).unwrap();
+        assert_eq!(extracted, vc);
+    }
+
+    /// A `sub` that disagrees with the holder is still a forgery.
+    #[tokio::test]
+    async fn test_validate_vp_rejects_a_mismatched_sub() {
+        let key_pair = test_key_pair();
+        let resolver = static_resolver();
+
+        let vc = mint_identity_credential(
+            &key_pair,
+            ISSUER_DID,
+            &kid(ISSUER_DID),
+            HOLDER_DID,
+            json!({ "email": "ops@example.com" }),
+        )
+        .unwrap();
+
+        let vp = mint_jwt_vp(&key_pair, HOLDER_DID, &kid(HOLDER_DID), ISSUER_DID, &vc).unwrap();
+        let holder_doc = resolver.resolve(HOLDER_DID).await.unwrap();
+
+        // Presented as if it belonged to a third party.
+        assert!(validate_vp(&vp, "did:web:someone-else", ISSUER_DID, &holder_doc).is_err());
     }
 
     #[tokio::test]

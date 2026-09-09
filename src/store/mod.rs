@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::{
     model::{dataset::RootDataset, policy::MessageOffer},
@@ -16,7 +17,7 @@ pub(crate) struct RemoteAddress {
 
 #[async_trait]
 pub(crate) trait Store: Send + Sync + 'static {
-    async fn get_datasets(&self, filter: Option<Vec<String>>) -> anyhow::Result<Vec<RootDataset>>;
+    async fn get_datasets(&self, filter: Option<Vec<Value>>) -> anyhow::Result<Vec<RootDataset>>;
 
     async fn get_dataset(&self, id: &str) -> anyhow::Result<Option<RootDataset>>;
     async fn get_matching_dataset(

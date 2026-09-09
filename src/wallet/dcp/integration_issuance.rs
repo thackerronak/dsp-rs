@@ -92,7 +92,7 @@ async fn test_issuance_and_delivery_integration() {
         "Credential id should be prefixed with issuer DID"
     );
     assert_eq!(credential.credential_type, "identity_credential");
-    assert_eq!(credential.format, "vc+jwt");
+    assert_eq!(credential.format, "VC1_0_JWT");
     assert_eq!(credential.issuer, ISSUER_DID);
 
     // 6. Verify signed JWT payload contents
@@ -102,7 +102,7 @@ async fn test_issuance_and_delivery_integration() {
     assert_eq!(claims["sub"], HOLDER_DID);
     let vc = &claims["vc"];
     let types = vc["type"].as_array().expect("vc.type should be an array");
-    assert!(types.iter().any(|t| t == "IdentityCredential"));
+    assert!(types.iter().any(|t| t == "identity_credential"));
     assert_eq!(vc["credentialSubject"]["address"]["country"], "DE");
 
     // 7. Verify Party B's REST endpoint GET /api/credentials/v1/credentials

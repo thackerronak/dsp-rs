@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::PathBuf, time::SystemTime};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::fs;
 
 use crate::{
@@ -48,7 +49,7 @@ impl FileStore {
 #[async_trait]
 impl Store for FileStore {
     #[cfg(feature = "tck")]
-    async fn get_datasets(&self, _filter: Option<Vec<String>>) -> anyhow::Result<Vec<RootDataset>> {
+    async fn get_datasets(&self, _filter: Option<Vec<Value>>) -> anyhow::Result<Vec<RootDataset>> {
         Ok(vec![
             RootDataset::new_tck("CAT0101", "CD123:CAT101:456"),
             RootDataset::new_tck("CAT0102", "CD123:CAT102:456"),
@@ -56,7 +57,7 @@ impl Store for FileStore {
     }
 
     #[cfg(not(feature = "tck"))]
-    async fn get_datasets(&self, _filter: Option<Vec<String>>) -> anyhow::Result<Vec<RootDataset>> {
+    async fn get_datasets(&self, _filter: Option<Vec<Value>>) -> anyhow::Result<Vec<RootDataset>> {
         let path = self.datasets_path();
         if !path.exists() {
             return Ok(vec![]);
@@ -169,6 +170,7 @@ impl Store for FileStore {
                 }),
             },
             callback_address: "some-callback-address".into(),
+            peer_did: "some-peer-did".into(),
         }))
     }
 

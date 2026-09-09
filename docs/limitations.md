@@ -51,6 +51,33 @@ For anyone pointing this connector at another issuer, these were the mismatches:
   type.** The configuration id (`IdentityCredential_jwt_vc_json`) names a format; the
   scope (`identity_credential`) is what a DCP presentation query matches on.
 
+## Interoperating with the Java EDC
+
+The demo runs a third party — an Eclipse EDC control plane, data plane and IdentityHub —
+and exchanges data with it in both directions (`docker-compose/SETUP.md`,
+`tests/e2e_party_c.rs`). Getting there surfaced these, which are worth knowing before
+pointing this connector at any other implementation.
+
+| Item | Detail | Where |
+|------|--------|-------|
+| **A callback address must be complete** | A peer's advertised DSP address is used verbatim, and this connector's own now carries the version path. Publishing a bare host and letting the sender append its own version path only works between two connectors that agree on that path. | `src/connector/app_state.rs` (`callback_address`), `src/negotiation/mod.rs` (`api_address`) |
+| **A peer's DID cannot be derived from its address** | The peer DID comes from the authenticated claims (provider side) or the federation configuration (consumer side). Party C's DID resolves to its IdentityHub, on a different host and port from its DSP endpoint — deriving `did:web:` from the address gets it wrong. | `src/negotiation/provider.rs`, `src/connector/internal_api.rs` |
+| **The scope grammar carries an operation** | A presentation query asks for `…vc.type:identity_credential:read`, and an inbound scope's trailing `read`/`*`/`all` is stripped before matching. The Java EDC's Credential Service rejects a type scope with no operation. | `src/wallet/dcp/scope.rs` |
+| **Two implementations match a query on different things** | This connector matches a presentation query against the type it stored a credential under; the Java EDC matches against the `type` array inside the credential. The demo therefore uses one string, `identity_credential`, in both places — including in the walt.id profile. | `src/wallet/dcp/holder.rs`, `docker-compose/issuer/config/issuer2-profiles.conf` |
+| **A presentation carries no `sub`** | `validate_vp` requires `iss` and checks `sub` only when present. The holder is the presentation's issuer; the Java EDC omits `sub` entirely. | `src/wallet/dcp/verifier.rs` |
+| **An issued credential needs `issuanceDate`** | Credentials this connector mints carry `issuanceDate`, `expirationDate`, an `id` and the holder in `credentialSubject.id`. A credential without `issuanceDate` is rejected outright by the Java EDC. | `src/wallet/dcp/issuer.rs` (`mint_identity_credential`) |
+| **Credential formats are a fixed vocabulary** | Issued credentials go on the wire as `VC1_0_JWT`. A holder that parses the format field — the Java EDC's IdentityHub does — rejects anything outside `VC1_0_LD`/`VC1_0_JWT`/`VC2_0_JOSE`/`VC2_0_SD_JWT`/`VC2_0_COSE`. | `src/wallet/dcp/issuer.rs` (`CREDENTIAL_FORMAT`) |
+| **Countering an identical offer stalls an EDC consumer** | When the consumer asks for exactly what was advertised, the provider agrees immediately instead of counter-offering. A counter-offer is legal DSP, but the Java EDC's management API has no action for a consumer to accept one, so the negotiation would never move. | `src/negotiation/provider.rs` |
+| **A DSP filter is opaque** | `CatalogRequestMessage.filter` is an array of arbitrary JSON, as the schema says. It was typed as an array of strings, which rejected the Java EDC's criterion objects. The store still ignores it. | `src/model/catalog.rs`, `src/store/mod.rs` |
+| **`dspace:endpoint` is dropped by the peer** | A transfer's data address is sent with the endpoint as `dspace:endpoint`, per the DSP context. This EDC release reads the endpoint from its own namespace, so a consumer there receives the token but no endpoint and has to address the provider directly. The reverse direction is unaffected. | `src/model/transfer.rs`, `docker-compose/USAGE.md` |
+
+Two things on the other side of the wire that this connector cannot fix, recorded so they
+are not re-diagnosed: a DID document's `authentication`/`assertionMethod` entries must be
+reference strings or full verification methods — a bare `{"id": …}` is rejected by the Java
+EDC (`docker-compose/issuer/did.json`) — and party C's IdentityHub has been seen to answer a
+presentation query with `401 No verification method found with key ID 'keys-1'` for a key its
+peer does publish, which a restart of IdentityHub clears.
+
 ## Protocol coverage
 
 | Item | Detail | Where |

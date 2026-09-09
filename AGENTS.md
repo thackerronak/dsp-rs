@@ -29,6 +29,9 @@ cargo test <name>                   # single test
 
 # end-to-end over the Docker demo (needs Docker; builds the image, ~1 min)
 cargo test --test e2e_docker -- --ignored --nocapture
+
+# end-to-end against a Java EDC connector, both directions (needs party C's images)
+cargo test --test e2e_party_c -- --ignored --nocapture
 ```
 
 `tests/e2e_docker.rs` is `#[ignore]`d so `cargo test` stays green without Docker. It
@@ -37,7 +40,14 @@ OID4VCI, exchanges DCP tokens both ways, then negotiates and pulls the dataset �
 whole of `SETUP.md` and `USAGE.md`. It tears the stack down and deletes the seeded
 credentials, so don't run it against a stack you are using by hand.
 
-`docker-compose/` runs a two-party demo; see `docker-compose/SETUP.md` and `USAGE.md`.
+`tests/e2e_party_c.rs` is the interop test: party C is an Eclipse EDC control plane, data
+plane and IdentityHub, and the test runs catalog, negotiation, transfer and data pull in
+both directions against it. It needs party C's images (`docker-compose/build-party-c.sh`)
+and `PARTY_C_ENABLED=true` in `docker-compose/.env`. Run it on its own — cargo runs test
+binaries in parallel and it shares ports and containers with `e2e_docker`.
+
+`docker-compose/` runs a two-party demo, plus an optional third party built from the Java
+EDC; see `docker-compose/SETUP.md` and `USAGE.md`.
 Config is loaded from `CONFIG_PATH` (default `config.json`) — the schema is
 `Configuration` in `src/connector/app_state.rs`.
 

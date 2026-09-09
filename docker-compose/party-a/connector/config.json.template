@@ -6,12 +6,13 @@
   "private_key_pem": "${PARTY_A_PRIVATE_KEY_PEM}",
   "issuer_url": "http://issuer:7002",
   "allowed_issuers": [
-    "did:web:issuer-did-server"
+    "did:web:issuer-did-server",
+    "did:web:${PARTY_A_DID_HOST}"
   ],
   "federation": {
     "party-b": {
       "did": "did:web:${PARTY_B_DID_HOST}"
-    }
+    }${PARTY_C_FEDERATION_ENTRY}
   },
   "wallet": {
     "private_key_pem": "${PARTY_A_WALLET_PRIVATE_KEY_PEM}",

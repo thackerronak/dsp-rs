@@ -10,6 +10,8 @@
 # Generated config files (created by setup-configs.sh)
 docker-compose/party-a/connector/config.json
 docker-compose/party-b/connector/config.json
+docker-compose/party-c/*/configuration.properties
+docker-compose/party-c/seed/seed.env
 
 # Docker compose local data
 docker-compose/**/data/

@@ -75,6 +75,7 @@ impl ContractNegotiation<ProviderView> {
         #[cfg_attr(not(feature = "tck"), allow(unused_mut))] mut self,
         state: &AppStateNegotiation<T>,
         callback_address: &str,
+        peer_did: &str,
     ) -> anyhow::Result<Option<Self>> {
         #[cfg(feature = "tck")]
         {
@@ -88,18 +89,9 @@ impl ContractNegotiation<ProviderView> {
         let get_access_token = || async {
             state
                 .authenticator
-                .get_token(&state.client, callback_address, my_did_web.clone())
+                .get_token(callback_address, peer_did.to_string())
                 .await
         };
-
-        // NOTE: currently only 2025-1 supported
-        // TODO: we should retrieve the metadata and determine the path for version 2025-1
-        #[cfg(not(feature = "tck"))]
-        let callback_address = format!(
-            "{}{}",
-            callback_address,
-            crate::connector::DSP_API_PATH_2025_1
-        );
 
         match self.state {
             NegotiationState::Requested(s) => {
@@ -118,6 +110,9 @@ impl ContractNegotiation<ProviderView> {
                         }),
                     }));
                 };
+
+                // Kept before the policy is consumed below, so the two can be compared.
+                let requested_policy = s.offer.policy_class.policy.clone();
 
                 #[cfg(feature = "tck")]
                 let policy = s.offer.policy_class.policy;
@@ -151,6 +146,31 @@ impl ContractNegotiation<ProviderView> {
                     }));
                 };
 
+                let assignee: String = s.claims.subject()?.into();
+
+                // The consumer asked for exactly what was advertised, so there is nothing
+                // to negotiate — agree straight away. Countering with an identical offer
+                // is legal DSP but leaves a consumer waiting to accept it, and the Java
+                // EDC's management API has no action for that, so it would stall forever.
+                if policy == requested_policy {
+                    let id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
+                    let agreement = Agreement::new(
+                        id,
+                        MessageOffer::new(s.offer.target, policy),
+                        my_did_web,
+                        assignee,
+                    );
+
+                    return Ok(Some(ContractNegotiation {
+                        provider_pid: self.provider_pid,
+                        consumer_pid: self.consumer_pid,
+                        state: NegotiationState::Agreed(AgreedData {
+                            sent: false,
+                            payload: AgreedDataPayload { agreement },
+                        }),
+                    }));
+                }
+
                 Ok(Some(ContractNegotiation {
                     provider_pid: self.provider_pid,
                     consumer_pid: self.consumer_pid,
@@ -158,7 +178,7 @@ impl ContractNegotiation<ProviderView> {
                         sent: false,
                         payload: OfferedDataPayload {
                             offer: MessageOffer::new(s.offer.target, policy),
-                            assignee: s.claims.subject()?.into(),
+                            assignee,
                         },
                     }),
                 }))
@@ -375,6 +395,8 @@ pub(crate) async fn contract_request<T: Store>(
 ) -> Result<impl IntoResponse, AppError> {
     debug!("Contract request with claims: {:?}", claims);
 
+    let peer_did = claims.subject()?.to_string();
+
     let Some(callback_address) = request.callback_address else {
         return Err(AppError::Contract(ContractNegotiationError::new(
             "".into(),
@@ -402,6 +424,7 @@ pub(crate) async fn contract_request<T: Store>(
     let n = Negotiation::Provider {
         contract,
         callback_address,
+        peer_did,
     };
     state.store.save_negotiation(&n).await?;
 
@@ -442,6 +465,7 @@ pub(crate) async fn contract_request_counter<T: Store>(
     let n = Negotiation::Provider {
         contract,
         callback_address: request.callback_address.unwrap_or_default(),
+        peer_did: claims.subject()?.to_string(),
     };
 
     state

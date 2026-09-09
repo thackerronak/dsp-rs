@@ -88,6 +88,23 @@ else
   echo "  Party B: $PARTY_B_EXTERNAL_ADDRESS"
 fi
 
+# Party C (Java EDC + IdentityHub) is optional and localhost-only: its DID resolves to a
+# container name inside the compose network, which no ngrok tunnel fronts.
+PARTY_C_ENABLED=${PARTY_C_ENABLED:-false}
+export PARTY_C_DID_HOST="party-c-identityhub%3A7083"
+
+if [ "$PARTY_C_ENABLED" = "true" ]; then
+  if [ "$ENFORCE_HTTPS" = "true" ]; then
+    echo "Error: PARTY_C_ENABLED=true requires ENFORCE_HTTPS=false"
+    echo "       Party C's DID is a container name, so it cannot be reached over ngrok."
+    exit 1
+  fi
+  echo "  Party C: http://party-c-controlplane:8082/api/dsp (did:web:${PARTY_C_DID_HOST}:party-c)"
+  export PARTY_C_FEDERATION_ENTRY=', "party-c": { "did": "did:web:'"${PARTY_C_DID_HOST}"':party-c" }'
+else
+  export PARTY_C_FEDERATION_ENTRY=""
+fi
+
 # Verify common required variables
 common_required_vars=(
   "PARTY_A_PRIVATE_KEY_PEM"
@@ -121,6 +138,7 @@ sed -e "s|\${PARTY_A_EXTERNAL_ADDRESS}|${PARTY_A_EXTERNAL_ADDRESS}|g" \
     -e "s|\${WALLET_CREDENTIAL_STORE_PATH}|${WALLET_CREDENTIAL_STORE_PATH}|g" \
     -e "s|\${WALLET_STS_CLIENT_ID}|${WALLET_STS_CLIENT_ID}|g" \
     -e "s|\${WALLET_STS_CLIENT_SECRET}|${WALLET_STS_CLIENT_SECRET}|g" \
+    -e "s|\${PARTY_C_FEDERATION_ENTRY}|${PARTY_C_FEDERATION_ENTRY}|g" \
     party-a/connector/config.json.template > party-a/connector/config.json
 
 echo "Generating Party B connector config..."
@@ -134,11 +152,32 @@ sed -e "s|\${PARTY_B_EXTERNAL_ADDRESS}|${PARTY_B_EXTERNAL_ADDRESS}|g" \
     -e "s|\${WALLET_STS_CLIENT_SECRET}|${WALLET_STS_CLIENT_SECRET}|g" \
     party-b/connector/config.json.template > party-b/connector/config.json
 
+if [ "$PARTY_C_ENABLED" = "true" ]; then
+  echo "Generating Party C configs (control plane, data plane, IdentityHub, seed)..."
+  for target in controlplane dataplane identityhub; do
+    sed -e "s|\${PARTY_C_DID_HOST}|${PARTY_C_DID_HOST}|g" \
+        -e "s|\${PARTY_A_DID_HOST}|${PARTY_A_DID_HOST}|g" \
+        -e "s|\${PARTY_C_MANAGEMENT_API_KEY}|${PARTY_C_MANAGEMENT_API_KEY}|g" \
+        -e "s|\${PARTY_C_VAULT_TOKEN}|${PARTY_C_VAULT_TOKEN}|g" \
+        "party-c/$target/configuration.properties.template" \
+        > "party-c/$target/configuration.properties"
+  done
+
+  sed -e "s|\${PARTY_C_DID_HOST}|${PARTY_C_DID_HOST}|g" \
+      -e "s|\${PARTY_A_DID_HOST}|${PARTY_A_DID_HOST}|g" \
+      -e "s|\${PARTY_C_MANAGEMENT_API_KEY}|${PARTY_C_MANAGEMENT_API_KEY}|g" \
+      -e "s|\${PARTY_C_ASSET_ID}|${PARTY_C_ASSET_ID}|g" \
+      party-c/seed/seed.env.template > party-c/seed/seed.env
+fi
+
 echo "✓ Configurations generated successfully"
 echo ""
 echo "Next step:"
 if [ "$ENFORCE_HTTPS" = "true" ]; then
   echo "  docker-compose --profile ngrok up -d"
+elif [ "$PARTY_C_ENABLED" = "true" ]; then
+  echo "  ./build-party-c.sh   # once, to build party C's images"
+  echo "  docker-compose --profile party-c up -d"
 else
   echo "  docker-compose up -d"
 fi

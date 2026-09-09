@@ -42,11 +42,11 @@ impl TransferProcess<ConsumerView> {
         }
 
         let my_did_web = state.participant_info.did_web()?;
-        let did = my_did_web.clone();
+        let peer_did = connector.did.clone();
         let get_access_token = || async {
             state
                 .authenticator
-                .get_token(&state.client, &connector.address, did)
+                .get_token(&connector.address, peer_did.clone())
                 .await
         };
 

@@ -18,13 +18,12 @@
     }
   ],
   "authentication": [
-    {
-      "id": "did:web:issuer-did-server#9vuaJyUxRx4KmHyoZ9kjJxMs_mjpnnf-mPM9nPMG51A"
-    }
+    "did:web:issuer-did-server#9vuaJyUxRx4KmHyoZ9kjJxMs_mjpnnf-mPM9nPMG51A"
   ],
   "assertionMethod": [
-    {
-      "id": "did:web:issuer-did-server#9vuaJyUxRx4KmHyoZ9kjJxMs_mjpnnf-mPM9nPMG51A"
-    }
+    "did:web:issuer-did-server#9vuaJyUxRx4KmHyoZ9kjJxMs_mjpnnf-mPM9nPMG51A"
+  ],
+  "capabilityInvocation": [
+    "did:web:issuer-did-server#9vuaJyUxRx4KmHyoZ9kjJxMs_mjpnnf-mPM9nPMG51A"
   ]
 }

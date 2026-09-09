@@ -50,7 +50,7 @@ pub(crate) async fn catalog_request<T: Store>(
                         )
                     }
                     AccessService::Concrete(data_service) => {
-                        data_service.endpoint_url = state.participant_info.external_address.clone();
+                        data_service.endpoint_url = state.participant_info.callback_address();
                     }
                 }
             });

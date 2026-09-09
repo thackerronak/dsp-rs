@@ -97,6 +97,7 @@ impl DidDocument {
 pub(crate) const VERSION_ENDPOINT_PATH: &str = "/.well-known/dspace-version";
 
 pub(crate) const CATALOG_SERVICE: &str = "CatalogService";
+pub(crate) const CREDENTIAL_SERVICE: &str = "CredentialService";
 pub(crate) const DATA_SERVICE: &str = "DataService";
 
 /// Fragment identifying this connector's `DataService` entry in its own DID document.
@@ -205,7 +206,7 @@ mod tests {
             "service": [
                 {
                     "id": "did:web:party#credential-service",
-                    "type": "CredentialService",
+                    "type": CREDENTIAL_SERVICE,
                     "serviceEndpoint": "http://party/api/credentials/v1"
                 }
             ]
@@ -213,7 +214,7 @@ mod tests {
         .expect("did document with service deserializes");
 
         assert_eq!(
-            document.service_endpoint("CredentialService"),
+            document.service_endpoint(CREDENTIAL_SERVICE),
             Some("http://party/api/credentials/v1")
         );
         assert_eq!(document.service_endpoint("IssuerService"), None);

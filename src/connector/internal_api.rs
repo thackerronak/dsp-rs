@@ -36,6 +36,14 @@ async fn api_negotiate<T: Store>(
     State(state): State<AppStateAPI<T>>,
     Json(request): Json<NegotiateRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    let Some(peer) = state.federation.get(&request.name) else {
+        return Err(AppError::BadRequest(format!(
+            "unknown connector {}",
+            request.name
+        )));
+    };
+    let peer_did = peer.did.clone();
+
     let Some(dataset) = state
         .store
         .get_federated_dataset(&request.name, &request.dataset_id)
@@ -81,6 +89,7 @@ async fn api_negotiate<T: Store>(
         },
         Connector {
             address: remote_address,
+            did: peer_did,
             provider_id: request.name,
         },
     )

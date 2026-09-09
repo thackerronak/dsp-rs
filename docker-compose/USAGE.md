@@ -181,3 +181,125 @@ Upon success, the echo service behind the demo dataset should echo the request:
   "body": "eyJzYW1wbGUtcGF5bG9hZCI6IDF9"
 }
 ```
+
+## Interoperating with party C (Java EDC)
+
+Everything above is party B talking to party A: the same implementation on both ends. The
+flows below are the same protocols against the Eclipse EDC stack, in both directions. Bring
+party C up and seed it first — see [SETUP.md](SETUP.md#party-c--a-java-edc-connector).
+
+### Party C consumes from party A
+
+Party C drives this through its management API, which is key-protected
+(`X-Api-Key: password`). Note `counterPartyAddress` is party A's **complete** DSP endpoint,
+version path included.
+
+```sh
+CP=http://localhost:34081/api/mgmt
+A_DSP=http://party-a-connector:3000/api/2025/1
+A_DID='did:web:party-a-connector%3A3000'
+
+# 1. catalog
+curl -s -X POST "$CP/v4/catalog/request" -H 'X-Api-Key: password' \
+  -H 'content-type: application/json' -d "{
+    \"@context\": [\"https://w3id.org/edc/connector/management/v2\"],
+    \"@type\": \"CatalogRequest\",
+    \"counterPartyAddress\": \"$A_DSP\",
+    \"counterPartyId\": \"$A_DID\",
+    \"protocol\": \"dataspace-protocol-http:2025-1\"
+  }" | jq '.dataset.hasPolicy[0]."@id"'
+
+# 2. negotiate — echo the offer from the catalog, with assigner and target filled in
+curl -s -X POST "$CP/v4/contractnegotiations" -H 'X-Api-Key: password' \
+  -H 'content-type: application/json' -d "{
+    \"@context\": [\"https://w3id.org/edc/connector/management/v2\"],
+    \"@type\": \"ContractRequest\",
+    \"counterPartyAddress\": \"$A_DSP\",
+    \"counterPartyId\": \"$A_DID\",
+    \"protocol\": \"dataspace-protocol-http:2025-1\",
+    \"policy\": {
+      \"@type\": \"Offer\",
+      \"@id\": \"urn:uuid:2828282:3dd1add8-4d2d-569e-d634-8394a8836a88\",
+      \"assigner\": \"$A_DID\",
+      \"target\": \"urn:uuid:3afeadd8-ed2d-569e-d634-8394a8836d57\",
+      \"permission\": [{\"action\": \"use\", \"constraint\": [
+        {\"leftOperand\": \"spatial\", \"operator\": \"isPartOf\", \"rightOperand\": \"_:EU\"}
+      ]}],
+      \"prohibition\": [], \"obligation\": []
+    }
+  }" | jq -r '."@id"'
+
+# 3. wait for FINALIZED and take the agreement id
+curl -s -H 'X-Api-Key: password' "$CP/v4/contractnegotiations/<negotiation-id>" \
+  | jq '{state, contractAgreementId}'
+
+# 4. transfer
+curl -s -X POST "$CP/v4/transferprocesses" -H 'X-Api-Key: password' \
+  -H 'content-type: application/json' -d "{
+    \"@context\": [\"https://w3id.org/edc/connector/management/v2\"],
+    \"@type\": \"TransferRequest\",
+    \"assetId\": \"urn:uuid:3afeadd8-ed2d-569e-d634-8394a8836d57\",
+    \"counterPartyAddress\": \"$A_DSP\",
+    \"connectorId\": \"$A_DID\",
+    \"contractId\": \"<agreement-id>\",
+    \"dataDestination\": {\"@type\": \"DataAddress\", \"type\": \"HttpProxy\"},
+    \"protocol\": \"dataspace-protocol-http:2025-1\",
+    \"transferType\": \"HttpData-PULL\"
+  }" | jq -r '."@id"'
+```
+
+Once the transfer reaches `STARTED`, party C's data plane holds the data address party A
+sent:
+
+```sh
+curl -s http://localhost:34103/api/proxy/flows/<transfer-id> | jq
+```
+
+The `authorization` property carries the bearer token. **`endpoint` comes back null**: party
+A sends it as `dspace:endpoint`, which is what DSP defines, but this EDC release reads the
+endpoint from its own namespace and drops it. So pull from party A directly, using the
+token party C received:
+
+```sh
+TOKEN=$(curl -s http://localhost:34103/api/proxy/flows/<transfer-id> \
+  | jq -r '.endpointProperties[] | select(.name=="authorization") | .value')
+
+curl -s -X POST 'http://localhost:13000/pull/test-path?test-query=true' \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+### Party A consumes from party C
+
+Party A discovers party C's DSP endpoint from the `DataService` entry in party C's DID
+document and syncs its catalog on the federation interval, so party C's asset shows up
+under `party-a/connector/data/datasets/federated/party-c/`. Restart party A if you do not
+want to wait out the interval.
+
+```sh
+OFFER=$(jq -r '.dataset.hasPolicy[0]."@id"' \
+  party-a/connector/data/datasets/federated/party-c/party-c-asset-1.json)
+
+# negotiate
+curl -s -X POST http://localhost:13000/api-internal/negotiate \
+  -H 'content-type: application/json' \
+  -d "{\"name\":\"party-c\",\"dataset_id\":\"party-c-asset-1\",\"offer_id\":\"$OFFER\"}"
+
+# wait for "finalized", then take the agreement id
+curl -s http://localhost:13000/api-internal/negotiate/<consumer-pid> | jq '.state'
+
+# transfer
+curl -s -X POST http://localhost:13000/api-internal/transfer \
+  -H 'content-type: application/json' \
+  -d '{"agreement_id":"<agreement-id>","format":"HttpData-PULL"}'
+```
+
+Party C sends a complete data address, so the pull needs nothing but a host-port rewrite:
+
+```sh
+D=$(curl -s http://localhost:13000/api-internal/transfer/<consumer-pid>)
+TOKEN=$(echo "$D" | jq -r '.data_address.endpointProperties[] | select(.name=="access_token") | .value')
+EP=$(echo "$D" | jq -r '.data_address.endpoint' \
+  | sed 's|http://party-c-dataplane:11002|http://localhost:34102|')
+
+curl -s "$EP" -H "Authorization: Bearer $TOKEN" | jq
+```

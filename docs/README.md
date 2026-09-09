@@ -53,7 +53,7 @@ find it — is in [Producer & Discovery](producer-and-discovery.md).
 
 **Reference:**
 - [Glossary](glossary.md) — DID, VC, VP, ODRL, DCAT, PID, EDR, BPN, …
-- [Limitations, security & production-readiness](limitations.md)
+- [Limitations, security & production-readiness](limitations.md) — includes what interoperating with the Java EDC required
 - [Sequence diagrams](diagrams/README.md) — Mermaid (renders on GitHub) + PlantUML
 
 ---

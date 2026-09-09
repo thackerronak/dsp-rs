@@ -91,6 +91,195 @@ services:
     profiles:
       - ngrok
 
+  # ==========================================
+  # PARTY C  (Java EDC connector + IdentityHub)
+  # ==========================================
+  # A second implementation of the same protocols, to prove interop: DSP 2025-1 over DCP
+  # against party A's Rust connector. Started only with `--profile party-c`, so the
+  # two-party flow above stays as light as it is.
+  #
+  # Unlike party A and B, party C splits the roles across processes: the control plane
+  # speaks DSP, the data plane moves bytes, and IdentityHub holds the keys, DID document
+  # and credentials. Build the images with ./build-party-c.sh.
+
+  party-c-postgres:
+    image: ${PARTY_C_POSTGRES_IMAGE}
+    container_name: party-c-postgres
+    environment:
+      POSTGRES_DB: controlplane
+      POSTGRES_USER: cp
+      POSTGRES_PASSWORD: cp
+    volumes:
+      - ./party-c/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cp -d controlplane"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - ssi-network
+    ports:
+      - "34432:5432"
+    profiles:
+      - party-c
+
+  party-c-vault:
+    image: ${PARTY_C_VAULT_IMAGE}
+    container_name: party-c-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${PARTY_C_VAULT_TOKEN}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      SKIP_SETCAP: "true"
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8200/v1/sys/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - ssi-network
+    ports:
+      - "34200:8200"
+    profiles:
+      - party-c
+
+  # Dev-mode vault keeps nothing across restarts, so the secrets are written on every up.
+  party-c-vault-init:
+    image: ${PARTY_C_VAULT_IMAGE}
+    container_name: party-c-vault-init
+    environment:
+      VAULT_ADDR: http://party-c-vault:8200
+      VAULT_TOKEN: ${PARTY_C_VAULT_TOKEN}
+      PARTY_C_AES_KEY: ${PARTY_C_AES_KEY}
+    entrypoint: ["/bin/sh", "/vault-init.sh"]
+    volumes:
+      - ./party-c/vault/vault-init.sh:/vault-init.sh:ro
+    depends_on:
+      party-c-vault:
+        condition: service_healthy
+    networks:
+      - ssi-network
+    profiles:
+      - party-c
+
+  # Guards party C's Identity API. The IdentityHub launcher MVD builds is the OAuth2
+  # variant, so an API key is not an option here.
+  keycloak:
+    image: ${PARTY_C_KEYCLOAK_IMAGE}
+    container_name: keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # Pins the `iss` of issued tokens to what the runtimes are configured to trust.
+      KC_HOSTNAME: http://keycloak:8080
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./party-c/keycloak/mvd-realm.json:/opt/keycloak/data/import/mvd-realm.json:ro
+    networks:
+      - ssi-network
+    ports:
+      - "34808:8080"
+    profiles:
+      - party-c
+
+  party-c-identityhub:
+    image: ${PARTY_C_IDENTITYHUB_IMAGE}
+    container_name: party-c-identityhub
+    # This launcher's entrypoint has no -Dedc.fs.config, so the config file is passed here.
+    environment:
+      ENV_JVM_ARGS: -Dedc.fs.config=/app/configuration.properties
+    volumes:
+      - ./party-c/identityhub/configuration.properties:/app/configuration.properties:ro
+    # The image's own healthcheck probes port 8080; this runtime's default context is 7080.
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:7080/api/check/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      party-c-postgres:
+        condition: service_healthy
+      party-c-vault-init:
+        condition: service_completed_successfully
+    # `docker compose start` does not re-apply the depends_on gate, so a restarted runtime
+    # can come up before its database and exit. Retry rather than staying down.
+    restart: on-failure
+    networks:
+      - ssi-network
+    ports:
+      - "34280:7080"
+      - "34281:7081"
+      - "34282:7082"
+      - "34283:7083"
+      - "34284:7084"
+    profiles:
+      - party-c
+
+  party-c-controlplane:
+    image: ${PARTY_C_CONTROLPLANE_IMAGE}
+    container_name: party-c-controlplane
+    volumes:
+      - ./party-c/controlplane/configuration.properties:/app/configuration.properties:ro
+    depends_on:
+      party-c-postgres:
+        condition: service_healthy
+      party-c-vault-init:
+        condition: service_completed_successfully
+    restart: on-failure
+    networks:
+      - ssi-network
+    ports:
+      - "34080:8080"
+      - "34081:8081"
+      - "34082:8082"
+    profiles:
+      - party-c
+
+  party-c-dataplane:
+    image: ${PARTY_C_DATAPLANE_IMAGE}
+    container_name: party-c-dataplane
+    volumes:
+      - ./party-c/dataplane/configuration.properties:/app/configuration.properties:ro
+    depends_on:
+      party-c-vault-init:
+        condition: service_completed_successfully
+    restart: on-failure
+    networks:
+      - ssi-network
+    ports:
+      - "34180:8080"
+      - "34102:11002"
+      - "34103:11003"
+    profiles:
+      - party-c
+
+  # One-shot: participant context, credential request to party A's issuer, data plane
+  # registration and the asset party A can consume. Safe to re-run.
+  #
+  # In its own profile so `--profile party-c up` starts the runtimes and nothing else —
+  # as a member of the party-c profile it would run on every `up`, seeding a second time.
+  # Run it explicitly:  docker-compose run --rm party-c-seed
+  party-c-seed:
+    image: ${PARTY_C_SEED_IMAGE}
+    container_name: party-c-seed
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache curl jq >/dev/null && exec /seed/seed.sh"]
+    # Generated by ../setup-configs.sh, because party A's DID depends on the mode.
+    env_file:
+      - ./party-c/seed/seed.env
+    volumes:
+      - ./party-c/seed:/seed:ro
+    depends_on:
+      - party-c-identityhub
+      - party-c-controlplane
+      - party-c-dataplane
+      - keycloak
+    networks:
+      - ssi-network
+    profiles:
+      - seed
+
 networks:
   ssi-network:
     driver: bridge

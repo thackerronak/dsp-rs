@@ -1,11 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
-use axum::{
-    Json, Router,
-    extract::State,
-    response::IntoResponse,
-    routing::post,
-};
+use anyhow::Context;
+
+use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -18,15 +15,19 @@ use crate::{
         DSP_API_PATH_2025_1,
         app_state::{AppState, AppStateAuthentication, TokenKeyPair},
     },
-    shared::{CATALOG_SERVICE, DATA_SERVICE, DidDocument, VERSION_ENDPOINT_PATH, data_service_id},
+    shared::{
+        CATALOG_SERVICE, CREDENTIAL_SERVICE, DATA_SERVICE, DidDocument, VERSION_ENDPOINT_PATH,
+        data_service_id,
+    },
     store::Store,
     wallet::{
         KeyPair,
         dcp::{
             holder::{self, HolderState},
             issuer::{self, IssuerState},
-            si_token::{ReplayCache, build_si_token},
+            si_token::{ReplayCache, build_si_token, validate_si_token},
             sts::{self, StsState},
+            verifier::{query_peer_presentation, validate_vc, validate_vp},
         },
         did::DidResolver,
         oid4vc::vci::{self, Oid4vciState},
@@ -40,11 +41,6 @@ mod token;
 
 #[cfg(all(test, not(feature = "tck")))]
 mod tests;
-
-#[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
-}
 
 /// Everything needed to stand up the connector's wallet.
 pub(crate) struct WalletConfig {
@@ -113,17 +109,15 @@ impl Authenticator {
             config.resolver.clone(),
         );
 
-        let sts = config
-            .sts_credentials
-            .map(|(client_id, client_secret)| {
-                StsState::new(
-                    config.credential_key_pair.clone(),
-                    config.local_did.clone(),
-                    config.kid.clone(),
-                    client_id,
-                    client_secret,
-                )
-            });
+        let sts = config.sts_credentials.map(|(client_id, client_secret)| {
+            StsState::new(
+                config.credential_key_pair.clone(),
+                config.local_did.clone(),
+                config.kid.clone(),
+                client_id,
+                client_secret,
+            )
+        });
 
         let oid4vci = Oid4vciState::new(
             config.credential_key_pair.clone(),
@@ -164,10 +158,14 @@ impl Authenticator {
         }
     }
 
-    /// Obtain a DSP access token from `remote_address` by presenting a Self-Issued ID Token.
+    /// Mint the Self-Issued ID Token that authorizes DSP requests to `remote_address`.
+    ///
+    /// DCP carries authorization on the protocol request itself: the peer validates this
+    /// token and then presents the token in its `token` claim to our Credential Service to
+    /// pull a presentation. `POST /auth/token` stays mounted for peers that expect a DSP
+    /// access token to be minted up front, but nothing on this path calls it.
     pub(crate) async fn get_token(
         &self,
-        #[cfg_attr(feature = "tck", allow(unused))] client: &Client,
         #[cfg_attr(feature = "tck", allow(unused))] remote_address: &str,
         #[cfg_attr(feature = "tck", allow(unused))] did_web: String,
     ) -> anyhow::Result<String> {
@@ -181,24 +179,97 @@ impl Authenticator {
             did_web
         };
 
-        let si_token = build_si_token(
+        // The peer hands this back to our Credential Service, so it is addressed to us.
+        let credential_service_token = build_si_token(
             &self.credential_key_pair,
             self.local_did.clone(),
-            target_did,
+            self.local_did.clone(),
             self.kid.clone(),
             None,
         )?;
 
-        let trimmed_remote = remote_address.trim_end_matches('/');
-        let response = client
-            .post(format!("{trimmed_remote}/auth/token"))
-            .bearer_auth(si_token)
-            .send()
-            .await?
-            .error_for_status()?;
+        build_si_token(
+            &self.credential_key_pair,
+            self.local_did.clone(),
+            target_did,
+            self.kid.clone(),
+            Some(credential_service_token),
+        )
+    }
 
-        let token_resp: TokenResponse = response.json().await?;
-        Ok(token_resp.access_token)
+    /// Run the DCP verifier over a peer's Self-Issued ID Token: validate the token, pull a
+    /// Verifiable Presentation from the peer's Credential Service, and validate the
+    /// presentation and the credential inside it.
+    pub(crate) async fn verify_peer_credentials(
+        &self,
+        si_token: &str,
+    ) -> anyhow::Result<(String, HashMap<String, CredentialData>)> {
+        let claims = validate_si_token(
+            si_token,
+            &self.local_did,
+            self.resolver.as_ref(),
+            &self.replay,
+        )
+        .await?;
+
+        let peer_did = claims.sub;
+        let peer_doc = self.resolver.resolve(&peer_did).await?;
+        let endpoint = peer_doc
+            .service_endpoint(CREDENTIAL_SERVICE)
+            .with_context(|| format!("{peer_did} advertises no {CREDENTIAL_SERVICE}"))?;
+
+        let vp_jwt = query_peer_presentation(
+            &self.client,
+            &self.credential_key_pair,
+            &self.local_did,
+            &self.kid,
+            &peer_did,
+            endpoint,
+            // the access token the peer minted for its own Credential Service
+            claims.token,
+        )
+        .await?;
+
+        let vc_jwt = validate_vp(&vp_jwt, &peer_did, &self.local_did, &peer_doc)?;
+        let (vc_issuer, subject) = validate_vc(
+            &vc_jwt,
+            &peer_did,
+            &self.allowed_issuers,
+            self.resolver.as_ref(),
+        )
+        .await?;
+
+        let credentials = HashMap::from([(
+            "identity".to_string(),
+            CredentialData {
+                r#type: "identity_credential".to_string(),
+                format: "vc+jwt".to_string(),
+                credential_data: subject,
+                issuer: vc_issuer,
+            },
+        )]);
+
+        Ok((peer_did, credentials))
+    }
+
+    /// Validate the bearer on an inbound DSP request.
+    ///
+    /// Two shapes arrive: a DSP access token this connector minted itself, handed out by
+    /// `POST /auth/token`, or the peer's Self-Issued ID Token carried on the protocol
+    /// request — the DCP path — which is verified here on the spot.
+    pub(crate) async fn authenticate(
+        &self,
+        bearer: &str,
+        local_iss: String,
+    ) -> anyhow::Result<AuthClaims> {
+        if let Ok(claims) = self.decode(bearer) {
+            return Ok(claims);
+        }
+
+        let (peer_did, credentials) = self.verify_peer_credentials(bearer).await?;
+
+        self.claims_from_credentials(credentials, local_iss, peer_did)
+            .context("peer presented no identity credential")
     }
 
     /// Resolve a peer's DID document.
@@ -222,6 +293,19 @@ impl Authenticator {
         iss_did_web: String,
         sub_did_web: String,
     ) -> anyhow::Result<Option<String>> {
+        self.claims_from_credentials(credentials, iss_did_web, sub_did_web)
+            .map(|claims| self.token_key_pair.encode(&claims))
+            .transpose()
+    }
+
+    /// The claims a presented `identity` credential grants, shared by the access token
+    /// `POST /auth/token` mints and the inline DCP path in [`Self::authenticate`].
+    fn claims_from_credentials(
+        &self,
+        credentials: HashMap<String, CredentialData>,
+        iss_did_web: String,
+        sub_did_web: String,
+    ) -> Option<AuthClaims> {
         let mut claims = AuthClaims::default();
 
         debug!("Presented credentials:\n{:?}", &credentials);
@@ -237,13 +321,13 @@ impl Authenticator {
             }
         }
         if !found {
-            return Ok(None);
+            return None;
         }
 
         claims.data.insert("iss".into(), Value::String(iss_did_web));
         claims.data.insert("sub".into(), Value::String(sub_did_web));
 
-        self.token_key_pair.encode(&claims).map(Some)
+        Some(claims)
     }
 
     pub(crate) fn new_transfer_token(
@@ -351,7 +435,7 @@ fn build_local_did_document(
         "service": [
             {
                 "id": format!("{local_did}#credential-service"),
-                "type": "CredentialService",
+                "type": CREDENTIAL_SERVICE,
                 "serviceEndpoint": credential_endpoint
             },
             {
@@ -404,7 +488,10 @@ pub(crate) async fn did(
     State(state): State<AppStateAuthentication>,
 ) -> Result<impl IntoResponse, AppError> {
     let did = state.participant_info.did_web()?;
-    let did_document = state.authenticator.did_document(&state.client, &did).await?;
+    let did_document = state
+        .authenticator
+        .did_document(&state.client, &did)
+        .await?;
     Ok(Json(did_document))
 }
 
@@ -426,11 +513,7 @@ mod tck {
     ) -> Result<impl IntoResponse, AppError> {
         let access_token = state
             .authenticator
-            .get_token(
-                &state.client,
-                &request.remote_address,
-                state.participant_info.did_web()?,
-            )
+            .get_token(&request.remote_address, state.participant_info.did_web()?)
             .await?;
         Ok((StatusCode::OK, access_token))
     }

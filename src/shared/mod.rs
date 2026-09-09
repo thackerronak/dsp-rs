@@ -10,6 +10,6 @@
 pub(crate) mod did;
 
 pub(crate) use did::{
-    CATALOG_SERVICE, DATA_SERVICE, DidDocument, VERSION_ENDPOINT_PATH, data_service_id,
-    derive_did_web, resolve_did_web,
+    CATALOG_SERVICE, CREDENTIAL_SERVICE, DATA_SERVICE, DidDocument, VERSION_ENDPOINT_PATH,
+    data_service_id, derive_did_web, resolve_did_web,
 };

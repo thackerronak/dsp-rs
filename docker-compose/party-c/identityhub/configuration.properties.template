@@ -1,0 +1,40 @@
+# Party C IdentityHub — holds party C's keys, DID document and credentials, and mints its
+# self-issued tokens. Rendered from this template by ../../setup-configs.sh.
+
+edc.hostname=party-c-identityhub
+edc.iam.did.web.use.https=false
+# Short, not 0: peers are rebuilt often here, and a stale DID document surfaces as an
+# unexplainable signature failure.
+edc.did.resolver.cache.expiry=30000
+edc.iam.credential.revocation.mimetype=*/*
+edc.iam.accesstoken.jti.validation=true
+# 1 day
+edc.iam.credential.renewal.graceperiod=86400
+
+web.http.port=7080
+web.http.path=/api
+web.http.identity.port=7081
+web.http.identity.path=/api/identity
+web.http.credentials.port=7082
+web.http.credentials.path=/api/credentials
+# did:web:party-c-identityhub%3A7083:party-c resolves under this context.
+web.http.did.port=7083
+web.http.did.path=/
+web.http.sts.port=7084
+web.http.sts.path=/api/sts
+# No version context here: this runtime serves the API manifest on the default context,
+# at GET /api/v1/version.
+
+edc.datasource.default.url=jdbc:postgresql://party-c-postgres:5432/identityhub
+edc.datasource.default.user=ih
+edc.datasource.default.password=ih
+edc.sql.schema.autocreate=true
+
+edc.encryption.aes.key.alias=aes-key-alias
+edc.vault.hashicorp.url=http://party-c-vault:8200
+edc.vault.hashicorp.token=${PARTY_C_VAULT_TOKEN}
+
+# This launcher is built on identityhub-oauth2-bom, so the Identity API takes a Keycloak
+# bearer token rather than an API key.
+edc.iam.oauth2.issuer=http://keycloak:8080/realms/mvd
+edc.iam.oauth2.jwks.url=http://keycloak:8080/realms/mvd/protocol/openid-connect/certs

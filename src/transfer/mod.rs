@@ -211,6 +211,9 @@ pub(crate) enum Transfer {
         agreement: Agreement,
         format: String,
         callback_address: String,
+        /// See `Negotiation::Provider::peer_did`.
+        #[serde(default)]
+        peer_did: String,
         data_address: Option<DataAddress>,
     },
     Consumer {
@@ -259,6 +262,7 @@ impl Transfer {
                 agreement,
                 format,
                 callback_address,
+                peer_did,
                 data_address,
             } => {
                 let (process, _) = process.handle_event(event).await?;
@@ -267,6 +271,7 @@ impl Transfer {
                     agreement,
                     format,
                     callback_address,
+                    peer_did,
                     data_address,
                 }
             }
@@ -300,15 +305,17 @@ impl Transfer {
                 agreement,
                 format,
                 callback_address,
+                peer_did,
                 data_address,
             } => process
-                .tick(store, &agreement, &callback_address)
+                .tick(store, &agreement, &callback_address, &peer_did)
                 .await?
                 .map(|p| Transfer::Provider {
                     process: p,
                     agreement,
                     format,
                     callback_address,
+                    peer_did,
                     data_address,
                 }),
             Transfer::Consumer {

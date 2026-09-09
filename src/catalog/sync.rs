@@ -107,7 +107,7 @@ async fn do_sync<T: Store>(
 
     let access_token = match state
         .authenticator
-        .get_token(&state.client, &root, connector.did.clone())
+        .get_token(&root, connector.did.clone())
         .await
     {
         Ok(t) => {

@@ -10,7 +10,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::Utc;
+use chrono::{SecondsFormat, Utc};
 use reqwest::Client;
 use serde_json::{Value, json};
 
@@ -27,6 +27,11 @@ use crate::wallet::{
 };
 
 const IDENTITY_CREDENTIAL_TYPE: &str = "identity_credential";
+
+/// Format of the credentials this issuer mints, as it goes on the wire. DCP names the
+/// VC 1.1-in-JWT envelope `VC1_0_JWT`; holders that parse the field — the Java EDC
+/// IdentityHub among them — reject anything outside that vocabulary.
+const CREDENTIAL_FORMAT: &str = "VC1_0_JWT";
 const CREDENTIAL_VALIDITY_SECS: i64 = 60 * 60 * 24 * 365;
 
 #[derive(Clone)]
@@ -97,6 +102,9 @@ pub(crate) fn router(state: IssuerState) -> Router {
     Router::new()
         .route("/metadata", get(metadata))
         .route("/credentials", post(issue_credential))
+        // DCP places the status resource directly under the Issuer Service endpoint; the
+        // nested path is kept for clients that follow the Location header we used to send.
+        .route("/requests/{issuer_pid}", get(request_status))
         .route("/credentials/requests/{issuer_pid}", get(request_status))
         .route("/offer", post(trigger_offer))
         .with_state(state)
@@ -109,17 +117,33 @@ pub(crate) fn mint_identity_credential(
     holder_did: &str,
     subject: Value,
 ) -> anyhow::Result<String> {
-    let now = Utc::now().timestamp();
+    let issued_at = Utc::now();
+    let expires_at = issued_at + chrono::Duration::seconds(CREDENTIAL_VALIDITY_SECS);
+    let timestamp = |t: chrono::DateTime<Utc>| t.to_rfc3339_opts(SecondsFormat::Secs, true);
+
+    // Name the holder in the subject: a verifier binds the presentation to this.
+    let mut subject = subject;
+    if let Some(map) = subject.as_object_mut() {
+        map.insert("id".to_string(), Value::String(holder_did.to_string()));
+    }
 
     let claims = json!({
         "iss": issuer_did,
         "sub": holder_did,
-        "iat": now,
-        "exp": now + CREDENTIAL_VALIDITY_SECS,
+        "iat": issued_at.timestamp(),
+        "exp": expires_at.timestamp(),
         "jti": uuid::Uuid::new_v4().to_string(),
         "vc": {
             "@context": ["https://www.w3.org/2018/credentials/v1"],
-            "type": ["VerifiableCredential", "IdentityCredential"],
+            "id": format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+            // A holder answers a presentation query by matching this against the credential
+            // type in the scope, so it has to be the same string the scope grammar uses.
+            "type": ["VerifiableCredential", IDENTITY_CREDENTIAL_TYPE],
+            "issuer": issuer_did,
+            // Required by the VC 1.1 data model. A credential without it is rejected
+            // outright by the Java EDC.
+            "issuanceDate": timestamp(issued_at),
+            "expirationDate": timestamp(expires_at),
             "credentialSubject": subject
         }
     });
@@ -218,7 +242,7 @@ async fn issue_credential(
         credentials: vec![CredentialContainer {
             credential_type: IDENTITY_CREDENTIAL_TYPE.to_string(),
             payload,
-            format: "vc+jwt".to_string(),
+            format: CREDENTIAL_FORMAT.to_string(),
             r#type: "CredentialContainer".to_string(),
         }],
     };
@@ -231,7 +255,7 @@ async fn issue_credential(
         }
     });
 
-    let location = format!("/api/issuance/v1/credentials/requests/{issuer_pid}");
+    let location = format!("/api/issuance/v1/requests/{issuer_pid}");
     Ok((StatusCode::CREATED, [(LOCATION, location)]))
 }
 
@@ -339,7 +363,9 @@ mod tests {
         let claims = insecure_decode::<Value>(&payload).unwrap().claims;
         assert_eq!(claims["iss"], ISSUER_DID);
         assert_eq!(claims["sub"], HOLDER_DID);
-        assert_eq!(claims["vc"]["type"][1], "IdentityCredential");
+        assert_eq!(claims["vc"]["type"][1], IDENTITY_CREDENTIAL_TYPE);
+        assert!(claims["vc"]["issuanceDate"].is_string());
+        assert!(claims["vc"]["expirationDate"].is_string());
         assert!(claims["vc"]["credentialSubject"]["email"].is_string());
         assert_eq!(
             claims["vc"]["credentialSubject"]["address"]["country"],

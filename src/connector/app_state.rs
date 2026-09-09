@@ -47,13 +47,14 @@ impl ParticipantInfo {
         derive_did_web(&self.external_address)
     }
 
+    /// The DSP endpoint peers send us messages on, version path included.
+    ///
+    /// A callback address is complete: whoever receives it appends only the message path.
+    /// The alternative — publishing a bare host and having the sender append its own
+    /// version path — only works between two connectors that happen to agree on that
+    /// path, and breaks against any other implementation.
     pub(crate) fn callback_address(&self) -> String {
-        #[cfg(feature = "tck")]
-        return format!("{}{}", self.external_address, super::DSP_API_PATH_2025_1);
-
-        // NOTE: we don't include the path for 2025-1
-        #[cfg(not(feature = "tck"))]
-        format!("{}", self.external_address)
+        format!("{}{}", self.external_address, super::DSP_API_PATH_2025_1)
     }
 }
 
@@ -241,12 +242,15 @@ impl<T: Store> AppState<T> {
 
 pub(crate) struct AppStateAPI<T: Store> {
     pub(crate) store: Arc<T>,
+    /// Peers by federation name, so a negotiation can address one by its configured DID.
+    pub(crate) federation: Arc<HashMap<String, RemoteConnector>>,
 }
 
 impl<T: Store> FromRef<AppState<T>> for AppStateAPI<T> {
     fn from_ref(app_state: &AppState<T>) -> Self {
         Self {
             store: app_state.store.clone(),
+            federation: app_state.federation.clone(),
         }
     }
 }

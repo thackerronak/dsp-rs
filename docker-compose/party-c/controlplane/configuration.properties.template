@@ -1,0 +1,57 @@
+# Party C control plane — Java EDC, DSP 2025-1 over DCP.
+# Rendered from this template by ../../setup-configs.sh; edit the template, not the output.
+
+edc.hostname=party-c-controlplane
+edc.participant.id=did:web:${PARTY_C_DID_HOST}:party-c
+edc.participant.did=did:web:${PARTY_C_DID_HOST}:party-c
+
+# Every DID in this stack is a container name, so it resolves over plain HTTP. Caching is
+# off because participants are re-seeded on every `up`.
+edc.iam.did.web.use.https=false
+# Short, not 0: peers are rebuilt often here, and a stale DID document surfaces as an
+# unexplainable signature failure.
+edc.did.resolver.cache.expiry=30000
+edc.iam.credential.revocation.mimetype=*/*
+edc.iam.accesstoken.jti.validation=true
+
+web.http.port=8080
+web.http.path=/api
+web.http.management.port=8081
+web.http.management.path=/api/mgmt
+web.http.management.auth.type=tokenbased
+web.http.management.auth.key=${PARTY_C_MANAGEMENT_API_KEY}
+web.http.protocol.port=8082
+web.http.protocol.path=/api/dsp
+web.http.control.port=8083
+web.http.control.path=/api/control
+web.http.signaling.port=8182
+web.http.signaling.path=/api/signaling
+# No version context: this runtime serves its API manifest on the default context, at
+# GET /api/v1/version. Read the paths off that rather than trusting documentation — at
+# this release management is /v4 and /v5, not MVD's /v5beta.
+
+# Self-issued tokens are minted by party C's own IdentityHub.
+edc.iam.sts.oauth.token.url=http://party-c-identityhub:7084/api/sts/token
+edc.iam.sts.oauth.client.id=did:web:${PARTY_C_DID_HOST}:party-c
+# IdentityHub provisions this secret when the participant context is created, under
+# <participantContextId>-sts-client-secret in the shared vault.
+edc.iam.sts.oauth.client.secret.alias=party-c-sts-client-secret
+
+# Trust anchors. Party A issues party C's identity credential; walt.id issued party A's.
+edc.iam.trustedissuer.partya.id=did:web:${PARTY_A_DID_HOST}
+edc.iam.trustedissuer.waltid.id=did:web:issuer-did-server
+
+# What party C asks a peer's Credential Service for. The trailing operation is required by
+# this scope grammar; dsp-rs strips it and matches on the credential type.
+edc.iam.dcp.scopes.identity.id=identity-scope
+edc.iam.dcp.scopes.identity.type=DEFAULT
+edc.iam.dcp.scopes.identity.value=org.eclipse.dspace.dcp.vc.type:identity_credential:read
+
+edc.datasource.default.url=jdbc:postgresql://party-c-postgres:5432/controlplane
+edc.datasource.default.user=cp
+edc.datasource.default.password=cp
+edc.sql.schema.autocreate=true
+
+edc.encryption.aes.key.alias=aes-key-alias
+edc.vault.hashicorp.url=http://party-c-vault:8200
+edc.vault.hashicorp.token=${PARTY_C_VAULT_TOKEN}

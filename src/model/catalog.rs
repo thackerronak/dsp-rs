@@ -1,5 +1,6 @@
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
@@ -112,14 +113,16 @@ pub(crate) struct CatalogRequest {
     #[serde(flatten)]
     r#type: JsonLDType,
 
-    pub(crate) filter: Option<Vec<String>>,
+    /// DSP leaves the contents of a filter to the implementation, so peers put whatever
+    /// their query language uses in here — the Java EDC sends criterion objects.
+    pub(crate) filter: Option<Vec<Value>>,
 }
 
 impl CatalogRequest {
-    pub(crate) fn new(filter: Option<Vec<String>>) -> Self {
+    pub(crate) fn new(filter: Option<Vec<Value>>) -> Self {
         Self {
             context: Default::default(),
-            r#type: "CatalogRequest".into(),
+            r#type: "CatalogRequestMessage".into(),
             filter,
         }
     }

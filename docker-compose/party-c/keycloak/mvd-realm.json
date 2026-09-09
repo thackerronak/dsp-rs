@@ -1,0 +1,196 @@
+{
+  "realm": "mvd",
+  "enabled": true,
+  "sslRequired": "none",
+  "displayName": "MVD Realm",
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Administrator with full access to all tenants and their resources"},
+      {
+        "name": "provisioner",
+        "description": "Can create and delete tenants but cannot access their resources"},
+      {
+        "name": "participant",
+        "description": "Regular participant context access role, can access their own resources"}
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "identity-api:read",
+      "description": "Read access to Identity API",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "identity-api:write",
+      "description": "Create, update delete objects in the Identity API",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "issuer-admin-api:read",
+      "description": "read access to the Issuer Admin API",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "issuer-admin-api:write",
+      "description": "write access to the Issuer Admin API",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "management-api:read",
+      "description": "Read access to the Management API",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "management-api:write",
+      "description": "Write access to the Management API",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "management-api:admin",
+      "description": "Admin (cross-tenant) access to the Management API",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "identity-api:admin",
+      "description": "Admin (cross-tenant) access to the Identity API",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    },
+    {
+      "name": "issuer-admin-api:admin",
+      "description": "Admin (cross-tenant) access to the Issuer Admin API",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true"
+      }
+    }
+  ],
+  "defaultOptionalClientScopes": [
+    "offline_access",
+    "management-api:read",
+    "management-api:write",
+    "management-api:admin",
+    "identity-api:read",
+    "identity-api:write",
+    "identity-api:admin",
+    "issuer-admin-api:read",
+    "issuer-admin-api:write",
+    "issuer-admin-api:admin"
+  ],
+  "clients": [
+    {
+      "clientId": "admin",
+      "name": "EDC-V Admin User",
+      "description": "Global admin client with full access",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "secret": "edc-v-admin-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "role",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "role",
+            "claim.value": "admin",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "issuer-admin-api:write",
+        "issuer-admin-api:read",
+        "issuer-admin-api:admin",
+        "identity-api:write",
+        "identity-api:read",
+        "identity-api:admin",
+        "management-api:admin"
+      ]
+    },
+    {
+      "clientId": "provisioner",
+      "name": "Provisioner User",
+      "description": "Can create and delete tenants",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "secret": "provisioner-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "role",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "role",
+            "claim.value": "provisioner",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "issuer-admin-api:write",
+        "issuer-admin-api:read",
+        "identity-api:write",
+        "identity-api:read",
+        "identity-api:admin",
+        "management-api:write",
+        "management-api:read",
+        "management-api:admin"
+      ]
+    }
+  ],
+  "users": [],
+  "groups": [],
+  "eventsEnabled": false
+}

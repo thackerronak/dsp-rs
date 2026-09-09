@@ -1,0 +1,25 @@
+# Party C data plane — dataplane-sdk driven, serves HttpData-PULL.
+# Rendered from this template by ../../setup-configs.sh.
+
+edc.hostname=party-c-dataplane
+dataplane.id=party-c-dataplane
+
+# The launcher's key seed extension generates this pair at boot and stores it in the vault.
+edc.transfer.proxy.token.signer.privatekey.alias=party-c-dataplane-privatekey
+edc.transfer.proxy.token.verifier.publickey.alias=party-c-dataplane-publickey
+
+edc.dpf.selector.url=http://party-c-controlplane:8083/api/control/v1/dataplanes
+
+web.http.port=8080
+web.http.path=/api
+web.http.signaling.port=8182
+web.http.signaling.path=/api/signaling
+# Provider side: where a consumer pulls the data from.
+web.http.public.port=11002
+web.http.public.path=/api/public
+# Consumer side: the convenience proxy that replays a running data flow.
+web.http.proxy.port=11003
+web.http.proxy.path=/api/proxy
+
+edc.vault.hashicorp.url=http://party-c-vault:8200
+edc.vault.hashicorp.token=${PARTY_C_VAULT_TOKEN}

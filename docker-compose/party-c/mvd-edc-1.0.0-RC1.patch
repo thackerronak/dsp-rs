@@ -1,0 +1,89 @@
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 253ac33..297c493 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -24,6 +24,12 @@ val edcBuildId = libs.plugins.edc.build.get().pluginId
+ 
+ allprojects {
+     apply(plugin = edcBuildId)
++
++    // The launcher images run a Java 23 JRE. Without pinning the release, a newer local
++    // JDK emits class files the image refuses to load (UnsupportedClassVersionError).
++    tasks.withType<JavaCompile>().configureEach {
++        options.release.set(23)
++    }
+ }
+ 
+ 
+diff --git a/extensions/signaling-auth-none/src/main/java/org/eclipse/edc/mvd/signaling/auth/SignalingAuthNoneExtension.java b/extensions/signaling-auth-none/src/main/java/org/eclipse/edc/mvd/signaling/auth/SignalingAuthNoneExtension.java
+index be00b37..381b683 100644
+--- a/extensions/signaling-auth-none/src/main/java/org/eclipse/edc/mvd/signaling/auth/SignalingAuthNoneExtension.java
++++ b/extensions/signaling-auth-none/src/main/java/org/eclipse/edc/mvd/signaling/auth/SignalingAuthNoneExtension.java
+@@ -14,7 +14,7 @@
+ 
+ package org.eclipse.edc.mvd.signaling.auth;
+ 
+-import org.eclipse.edc.connector.dataplane.selector.spi.instance.AuthorizationProfile;
++import org.eclipse.edc.connector.controlplane.dataplane.spi.instance.AuthorizationProfile;
+ import org.eclipse.edc.runtime.metamodel.annotation.Inject;
+ import org.eclipse.edc.runtime.metamodel.annotation.Provides;
+ import org.eclipse.edc.signaling.spi.authorization.Header;
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 4a9f653..830af77 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -3,8 +3,8 @@ format.version = "1.1"
+ 
+ [versions]
+ awaitility = "4.3.0"
+-dataplane-sdk = "1.0.0"
+-edc = "0.19.0-SNAPSHOT"
++dataplane-sdk = "1.1.0"
++edc = "1.0.0-RC1"
+ edc-build = "1.5.2"
+ jackson = "2.22.1"
+ jakarta-json = "2.1.3"
+@@ -18,6 +18,7 @@ edc-boot = { module = "org.eclipse.edc:boot", version.ref = "edc" }
+ edc-junit = { module = "org.eclipse.edc:junit", version.ref = "edc" }
+ edc-core-participantcontext-config = { module = "org.eclipse.edc:participant-context-config-core", version.ref = "edc" }
+ edc-core-runtime = { module = "org.eclipse.edc:runtime-core", version.ref = "edc" }
++edc-config-filesystem = { module = "org.eclipse.edc:configuration-filesystem", version.ref = "edc" }
+ edc-ext-http = { module = "org.eclipse.edc:http", version.ref = "edc" }
+ edc-ext-jsonld = { module = "org.eclipse.edc:json-ld", version.ref = "edc" }
+ edc-controlplane-transform = { module = "org.eclipse.edc:control-plane-transform", version.ref = "edc" }
+diff --git a/launchers/dataplane/build.gradle.kts b/launchers/dataplane/build.gradle.kts
+index 7d80705..cfcf824 100644
+--- a/launchers/dataplane/build.gradle.kts
++++ b/launchers/dataplane/build.gradle.kts
+@@ -22,6 +22,9 @@ dependencies {
+     implementation(project(":extensions:signaling-auth-none"))
+     implementation(libs.edc.boot)
+     implementation(libs.edc.core.runtime)
++    // Reads -Dedc.fs.config; the other launchers get it from their BOM, this one did not,
++    // so its properties file was silently ignored.
++    runtimeOnly(libs.edc.config.filesystem)
+     implementation(libs.edc.ext.http)
+     implementation(libs.dataplane.sdk)
+     implementation(libs.dataplane.sdk.jakarta.ee)
+@@ -37,7 +40,6 @@ dependencies {
+ 
+     runtimeOnly(libs.edc.core.participantcontext.config)
+     runtimeOnly(libs.edc.vault.hashicorp)
+-    runtimeOnly(libs.edc.bom.dataplane.sql)
+ }
+ 
+ tasks.shadowJar {
+diff --git a/launchers/dataplane/src/main/java/org/eclipse/edc/mvd/dataplane/SignalingDataPlaneRuntimeExtension.java b/launchers/dataplane/src/main/java/org/eclipse/edc/mvd/dataplane/SignalingDataPlaneRuntimeExtension.java
+index 2876726..5d503a8 100644
+--- a/launchers/dataplane/src/main/java/org/eclipse/edc/mvd/dataplane/SignalingDataPlaneRuntimeExtension.java
++++ b/launchers/dataplane/src/main/java/org/eclipse/edc/mvd/dataplane/SignalingDataPlaneRuntimeExtension.java
+@@ -167,7 +167,8 @@ public class SignalingDataPlaneRuntimeExtension implements ServiceExtension {
+         switch (dataFlow.getProfile()) {
+             case "NonFinite-PULL", "Finite-PULL", "HttpData-PULL" -> {
+ 
+-                var token = tokenGenerationService.generate(privateKeyId,
++                // null vault partition: the key seed extension stores these aliases unpartitioned
++                var token = tokenGenerationService.generate(null, privateKeyId,
+                         tokenParameters -> tokenParameters.header("kid", publicKeyId),
+                         tokenParameters -> tokenParameters.claims("sub", dataFlow.getId()),
+                         tokenParameters -> tokenParameters.claims("scope", "dataflow"),

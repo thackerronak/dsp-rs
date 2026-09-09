@@ -153,6 +153,10 @@ pub(crate) enum Negotiation {
         #[serde(flatten)]
         contract: ContractNegotiation<ProviderView>,
         callback_address: String,
+        /// The DID the consumer authenticated as, so replies are addressed to it rather
+        /// than to a DID guessed from `callback_address`.
+        #[serde(default)]
+        peer_did: String,
     },
     Consumer {
         #[serde(flatten)]
@@ -187,9 +191,11 @@ impl Negotiation {
             Negotiation::Provider {
                 contract,
                 callback_address,
+                peer_did,
             } => Negotiation::Provider {
                 contract: contract.handle_event(claims, event).await?,
                 callback_address,
+                peer_did,
             },
             Negotiation::Consumer {
                 contract,
@@ -209,12 +215,14 @@ impl Negotiation {
             Negotiation::Provider {
                 contract,
                 callback_address,
+                peer_did,
             } => contract
-                .tick(state, &callback_address)
+                .tick(state, &callback_address, &peer_did)
                 .await?
                 .map(|c| Negotiation::Provider {
                     contract: c,
                     callback_address,
+                    peer_did,
                 }),
             Negotiation::Consumer {
                 contract,
@@ -473,16 +481,18 @@ pub(crate) struct Connector {
     #[serde(rename = "connectorAddress")]
     pub(crate) address: String,
     pub(crate) provider_id: String,
+    /// The peer's DID, from the federation configuration. A peer's identity cannot be
+    /// guessed from its address: party C's DID is served by its IdentityHub, on a
+    /// different host and port from its DSP endpoint.
+    #[serde(default)]
+    pub(crate) did: String,
 }
 
 impl Connector {
+    /// The peer's DSP endpoint as it advertised it — already carrying whatever version
+    /// path that peer serves, so nothing is appended here.
     pub(crate) fn api_address(&self) -> String {
-        #[cfg(feature = "tck")]
-        return format!("{}", self.address);
-
-        // NOTE: currently only 2025-1 supported
-        #[cfg(not(feature = "tck"))]
-        format!("{}{}", self.address, crate::connector::DSP_API_PATH_2025_1)
+        self.address.clone()
     }
 }
 

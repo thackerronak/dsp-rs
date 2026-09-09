@@ -79,11 +79,10 @@ impl ContractNegotiation<ConsumerView> {
             };
         }
 
-        let iss_did_web = state.participant_info.did_web()?;
         let get_access_token = || async {
             state
                 .authenticator
-                .get_token(&state.client, &connector.address, iss_did_web)
+                .get_token(&connector.address, connector.did.clone())
                 .await
         };
 

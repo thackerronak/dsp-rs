@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRef, FromRequestParts};
 use axum::http::StatusCode;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
@@ -9,7 +9,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::connector::app_state::AppState;
+use crate::connector::app_state::{AppState, AppStateAuthentication};
 use crate::store::Store;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -95,19 +95,29 @@ where
             .and_then(|value| value.to_str().ok())
             .ok_or((StatusCode::UNAUTHORIZED, "Missing header".into()))?;
 
-        Ok(state
+        let bearer = auth_header
+            .strip_prefix("Bearer ")
+            .or_else(|| auth_header.strip_prefix("bearer "))
+            .unwrap_or(auth_header);
+
+        let auth_state = AppStateAuthentication::from_ref(state);
+        let local_iss = auth_state
+            .participant_info
+            .did_web()
+            .unwrap_or_else(|_| auth_state.authenticator.local_did.clone());
+
+        auth_state
             .authenticator
-            .decode(
-                auth_header
-                    .strip_prefix("Bearer ")
-                    .or_else(|| auth_header.strip_prefix("bearer "))
-                    .unwrap_or(auth_header),
-            )
+            .authenticate(bearer, local_iss)
+            .await
             .map_err(|err| {
+                // Also logged, not just returned: the peer sees this in a response body,
+                // but whoever is debugging the rejection is reading these logs.
+                tracing::warn!("Rejected request from an unauthenticated peer: {err}");
                 (
                     StatusCode::UNAUTHORIZED,
-                    format!("Failed to decode access token, error: {err}"),
+                    format!("Failed to authenticate request, error: {err}"),
                 )
-            })?)
+            })
     }
 }

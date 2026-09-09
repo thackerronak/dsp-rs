@@ -41,6 +41,7 @@ impl TransferProcess<ProviderView> {
         state: &AppStateTransfer<T>,
         #[cfg_attr(not(feature = "tck"), allow(unused_variables))] agreement: &Agreement,
         callback_address: &str,
+        peer_did: &str,
     ) -> anyhow::Result<Option<Self>> {
         #[cfg(feature = "tck")]
         {
@@ -51,22 +52,12 @@ impl TransferProcess<ProviderView> {
         }
 
         let my_did_web = state.participant_info.did_web()?;
-        let did = my_did_web.clone();
         let get_access_token = || async {
             state
                 .authenticator
-                .get_token(&state.client, callback_address, did)
+                .get_token(callback_address, peer_did.to_string())
                 .await
         };
-
-        // NOTE: currently only 2025-1 supported
-        // TODO: we should retrieve the metadata and determine the path for version 2025-1
-        #[cfg(not(feature = "tck"))]
-        let callback_address = format!(
-            "{}{}",
-            callback_address,
-            crate::connector::DSP_API_PATH_2025_1
-        );
 
         let pull_endpoint = format!("{}/pull", state.participant_info.external_address);
 
@@ -276,6 +267,7 @@ pub(crate) async fn transfer_request<T: Store>(
         agreement: s.agreement,
         format: request.format,
         callback_address: request.callback_address,
+        peer_did: claims.subject()?.to_string(),
         data_address: request.data_address,
     };
     state.store.save_transfer(&t).await?;
