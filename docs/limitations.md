@@ -96,6 +96,7 @@ peer does publish, which a restart of IdentityHub clears.
 | **Terminated negotiations re-picked-up** | A code comment flags that terminated negotiations get picked up by the pending query — a potential reprocessing loop to verify. | `src/store/file_store.rs` |
 | **Unstable catalog id & ignored filter** | The catalog `@id` is a fresh UUID each request (FIXME: should be stable), and `get_datasets`' `filter` argument is currently ignored. | `src/catalog/mod.rs`, `src/store/file_store.rs` |
 | **File-based store** | The default `Store` is file-backed; consider concurrency/atomicity and a database backend for scale. The `Store` trait already abstracts this. | `src/store/file_store.rs` |
+| **No revocation status list** | Issued credentials carry no revocation mechanism (no `bitstringstatuslist`/`revocationlist2020` status entry), so a revoked credential is indistinguishable from a valid one. The DCP TCK's revocation test cases fail on this regardless of configuration. | `src/wallet/dcp/issuer.rs` (`mint_identity_credential`) |
 
 ## Ergonomics
 
