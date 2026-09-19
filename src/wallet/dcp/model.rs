@@ -11,13 +11,14 @@ fn dcp_context() -> Vec<String> {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CredentialObject {
     pub(crate) id: String,
+    pub(crate) r#type: String,
     pub(crate) credential_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) profile: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) binding_methods: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) schema: Option<Value>,
+    pub(crate) credential_schema: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -26,7 +27,14 @@ pub(crate) struct CredentialContainer {
     pub(crate) credential_type: String,
     pub(crate) payload: String,
     pub(crate) format: String,
+    // Optional on the way in: the DCP TCK's CredentialMessage fixtures omit it, and the
+    // container's type is implied by context. We still send it ourselves (issuer.rs).
+    #[serde(default = "credential_container_type")]
     pub(crate) r#type: String,
+}
+
+fn credential_container_type() -> String {
+    "CredentialContainer".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -85,6 +93,7 @@ pub(crate) struct CredentialRequestStatusMessage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct IssuerMetadata {
+    pub(crate) r#type: String,
     pub(crate) issuer: String,
     pub(crate) credentials_supported: Vec<CredentialObject>,
 }
@@ -134,6 +143,7 @@ mod tests {
             "issuer": "did:web:issuer",
             "credentials": [{
                 "id": "credential-1",
+                "type": "CredentialObject",
                 "credentialType": "identity_credential"
             }]
         }));

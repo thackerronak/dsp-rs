@@ -46,7 +46,15 @@ struct IssuerInner {
     client: Client,
     resolver: Arc<dyn DidResolver>,
     replay: ReplayCache,
-    sessions: Mutex<HashMap<String, CredentialRequestStatusMessage>>,
+    sessions: Mutex<HashMap<String, Session>>,
+}
+
+/// A credential request's status, plus who is allowed to poll it: the DID that
+/// authenticated the original request, never the correlation id in `holder_pid` (that's
+/// caller-supplied and unauthenticated).
+struct Session {
+    requester_did: String,
+    status: CredentialRequestStatusMessage,
 }
 
 impl IssuerState {
@@ -171,10 +179,13 @@ fn default_subject(holder_did: &str) -> Value {
 fn identity_credential_object() -> CredentialObject {
     CredentialObject {
         id: IDENTITY_CREDENTIAL_TYPE.to_string(),
+        r#type: "CredentialObject".to_string(),
         credential_type: IDENTITY_CREDENTIAL_TYPE.to_string(),
-        profile: None,
-        binding_methods: Vec::new(),
-        schema: None,
+        // The DCP-registered profile for what this issuer actually mints: VC 1.1,
+        // StatusList2021 revocation, JWT envelope — matches CREDENTIAL_FORMAT (VC1_0_JWT).
+        profile: Some("vc11-sl2021/jwt".to_string()),
+        binding_methods: vec!["did:web".to_string()],
+        credential_schema: None,
     }
 }
 
@@ -195,6 +206,7 @@ async fn authenticate(state: &IssuerState, headers: &HeaderMap) -> Result<String
 
 async fn metadata(State(state): State<IssuerState>) -> impl IntoResponse {
     Json(IssuerMetadata {
+        r#type: "IssuerMetadata".to_string(),
         issuer: state.inner.issuer_did.clone(),
         credentials_supported: vec![identity_credential_object()],
     })
@@ -226,12 +238,13 @@ async fn issue_credential(
         status: "ISSUED".to_string(),
     };
 
-    state
-        .inner
-        .sessions
-        .lock()
-        .expect("issuer sessions mutex poisoned")
-        .insert(issuer_pid.clone(), status);
+    state.inner.sessions.lock().expect("issuer sessions mutex poisoned").insert(
+        issuer_pid.clone(),
+        Session {
+            requester_did: holder_did.clone(),
+            status,
+        },
+    );
 
     let message = CredentialMessage {
         context: vec![DCP_CONTEXT.to_string()],
@@ -261,18 +274,26 @@ async fn issue_credential(
 
 async fn request_status(
     State(state): State<IssuerState>,
+    headers: HeaderMap,
     Path(issuer_pid): Path<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let status = state
+    let caller_did = authenticate(&state, &headers).await?;
+
+    let session = state
         .inner
         .sessions
         .lock()
         .expect("issuer sessions mutex poisoned")
         .get(&issuer_pid)
-        .cloned()
+        .map(|s| (s.requester_did.clone(), s.status.clone()))
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(status))
+    // Same response as an unknown issuer_pid: a mismatch must not confirm the id exists.
+    if session.0 != caller_did {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    Ok(Json(session.1))
 }
 
 async fn trigger_offer(
@@ -432,7 +453,15 @@ mod tests {
 
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let metadata: IssuerMetadata = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(metadata.r#type, "IssuerMetadata");
         assert_eq!(metadata.issuer, ISSUER_DID);
         assert_eq!(metadata.credentials_supported.len(), 1);
+
+        let object = &metadata.credentials_supported[0];
+        assert_eq!(object.r#type, "CredentialObject");
+        assert!(!object.id.is_empty());
+        assert!(!object.credential_type.is_empty());
+        assert!(object.profile.is_some());
+        assert!(!object.binding_methods.is_empty());
     }
 }

@@ -32,18 +32,14 @@ reason to carry that stub into a run whose entire point is exercising the real D
 RUST_LOG=debug CONFIG_PATH="tck/config.json" cargo run --bin dsp-rs
 ```
 
-Then run the TCK (Docker image or Gradle `shadowJar`, per its own README) with the properties in
-[tck/dcp-rs.tck.properties](tck/dcp-rs.tck.properties). Two things there need a live run to fill in — the TCK mints
-its own DIDs for the mock services it stands up, and prints them at startup rather than exposing them as static
-config:
+Then run the TCK (Docker image, or Gradle `:dcp-tck:shadowJar` then `java -jar dcp-tck-runtime.jar -config
+tck/dcp-rs.tck.properties`, per its own README) against the running connector.
 
-- `dataspacetck.did.thirdparty`, marked `CHANGE_ME` in the properties file.
-- `tck/config.json`'s `allowed_issuers`, currently set to `did:web:localhost%3A8080` (derived the same way this
-  connector derives its own DID — from `dataspacetck.callback.address`, `http://localhost:8080`). That is this
-  connector's best guess at the DID the TCK's own mock issuer signs credentials with in the Verifier test package;
-  confirm it against the TCK's log and adjust if the "authorized" verifier cases come back rejected.
-
-This integration has not been run end to end in this environment (no Docker daemon available here) — treat it as a
-first pass to validate against a real run, not a confirmed-working setup. One known, unavoidable gap either way: this
-connector issues no revocation status list, so the TCK's revocation test cases will fail regardless of configuration
-(see [docs/limitations.md](docs/limitations.md)).
+This has been run end to end (Gradle build, JDK 17): **85 of 117 test cases pass.** That run found and fixed six real
+conformance bugs, now fixed on this branch — see [docs/limitations.md](docs/limitations.md), "DCP TCK conformance",
+for the full list of what was fixed and what's left. What's left splits into a genuine, security-relevant gap in how
+a presented credential's content is checked (expiry, revocation, subject binding), an already-known gap (`kid` is
+never used to pick a verification key), an inherent conflict between this connector's single-identity architecture
+and the TCK's three-separate-parties harness model, and a handful of real unimplemented CredentialService/
+IssuerService business rules. None of it is a config problem in the committed `tck/dcp-rs.tck.properties` /
+`tck/config.json`.

@@ -78,6 +78,66 @@ EDC (`docker-compose/issuer/did.json`) — and party C's IdentityHub has been se
 presentation query with `401 No verification method found with key ID 'keys-1'` for a key its
 peer does publish, which a restart of IdentityHub clears.
 
+## DCP TCK conformance
+
+Run against `eclipse-dataspacetck/dcp-tck` (`tck/dcp-rs.tck.properties`, see its comments
+for how): 85 of 117 test cases pass. That run found and fixed five real conformance bugs,
+none related to party C — the DCP TCK exercises the wallet's Credential Service, Issuer
+Service and verifier directly, none of which the two-party demo's own tests happen to probe
+this hard:
+
+| Item | Detail | Where |
+|------|--------|-------|
+| **Issuer metadata had the wrong shape** | `GET /metadata` returned an object missing `"type": "IssuerMetadata"`, and its `CredentialObject` entries were missing `"type": "CredentialObject"`, had no `profile`, and an empty `bindingMethods` — the TCK's own metadata schema requires all four, and a peer resolving credentials by id needs them too. | `src/wallet/dcp/issuer.rs` (`identity_credential_object`, `metadata`) |
+| **A delivered credential's container was parsed too strictly** | `CredentialContainer.type` was a required field, but the TCK's own seed `CredentialMessage`s omit it (the container's type is implied by context) — every seeding call this connector received failed to parse, with a `422` that then cascaded into every test that depended on seeded credentials being present. | `src/wallet/dcp/model.rs` (`CredentialContainer`) |
+| **The credential-status endpoint required no authentication at all** | `GET /requests/{issuer_pid}` had no `authenticate()` call, so any caller — no token, an expired one, one signed by someone else — could poll any request's status, including one made under a different holder's identity. | `src/wallet/dcp/issuer.rs` (`request_status`) |
+| **SI token validation didn't check `nbf` or `iat`, and let `exp` slide 60s past** | `jsonwebtoken`'s `Validation` defaults to `validate_nbf: false` (silently off) and a 60s `leeway` on `exp`; nothing validates `iat` at all regardless of config. An SI token is minted and used within the same request, so none of that slack serves a purpose here — it only masked stale or backdated tokens the TCK's negative tests specifically construct. | `src/wallet/dcp/si_token.rs` (`validate_si_token`) |
+| **`allowed_issuers` didn't include this connector's own DID** | `tck/config.json` initially pointed `allowed_issuers` at a guessed external DID. With it fixed to this connector's own DID (self-issued credentials, matching the demo's own `docker-compose/party-a` convention), two presentation-verifier tests that need a *trusted* credential to reach validation at all started passing — and, in the same run, exposed the next item, which that wrong config had been silently hiding behind an unrelated 401. | `tck/config.json` (`allowed_issuers`) |
+
+What's left, in four groups:
+
+1. **A real, security-relevant gap in verifying a presented credential**, only visible once
+   `allowed_issuers` is correct (above) and the verifier actually reaches this code instead
+   of rejecting everything on trust alone: the verifier accepts a presentation carrying an
+   **expired** credential, a **revoked/suspended** one (revocation isn't implemented at
+   all — see "No revocation status list" above), one **not yet valid**, one whose
+   `credentialSubject.id` **doesn't match the presenting holder**, one with a **violated
+   schema**, and a presentation that contains a **different credential than the scope
+   requested** or is **missing a requested one**. `validate_vc` (`src/wallet/dcp/verifier.rs`)
+   checks the JWT envelope's `iss`/`sub`/`exp` and the issuer trust list, but never reads the
+   VC-1.1 body's own `credentialSubject.id` or `expirationDate`/`issuanceDate`, never checks
+   revocation, and nothing cross-checks a presentation's credential types against what the
+   scope actually asked for. This is real verification logic to add, not a config or parsing
+   fix. Covers `5.4.2.1`, `5.4.2.3`, `5.4.2.4`, `5.4.3`, `5.4.3.6` (both cases), `5.4.3.7`,
+   and the schema-violation case.
+2. **Already known** — the `kid`-header-ignored gap (see "Single verification key assumed"
+   above) fails the TCK's "rejects a token whose `kid` resolves to no verification method"
+   cases outright, since this connector doesn't look at `kid` in the first place.
+3. **A structural mismatch between this connector's architecture and the TCK's harness
+   model, not a bug in either.** The TCK models holder, issuer and verifier as three
+   separate parties, each with its own key it can override via
+   `dataspacetck.key.{holder,issuer}` — except `.key.verifier`, which does not exist; the
+   TCK always signs as verifier with a key it generates itself. This connector is one
+   identity playing all three roles. Setting `dataspacetck.did.verifier` to this
+   connector's DID (required so the `aud` on inbound presentation-verifier requests
+   matches) means the TCK's own verifier-signed queries to this connector's Credential
+   Service — the `presentation.cs` package — can never carry a signature this connector
+   can validate, since there is no way to supply the matching private key. Symmetrically,
+   a delivery-tracking assertion in `issuance.issuer` checks the TCK's own in-process
+   mock object rather than a real HTTP round trip, which only sees a delivery when
+   `dataspacetck.did.holder` is the TCK's own generated identity rather than this
+   connector's real one — the opposite of what `issuance.cs`/`presentation.cs` need. No
+   single value for these properties satisfies every package. Affects `5.4.1.2`, `4.3.3`
+   (verifier `jti`), `6.1`, `6.4.1`, `6.5.1`, `6.5.2`.
+4. **Real, unimplemented business rules**, independent of the above: the Credential
+   Service accepts a `CredentialMessage` for any `holderPid` rather than only ones with a
+   pending request, doesn't validate the `status` field against a known set, and doesn't
+   reject an empty `credentials` array; the Issuer Service doesn't prevent issuing twice
+   for the same `holderPid` or reject an empty `credentials` array on a request; a sparse
+   `CredentialOfferMessage` (credentials referenced by `id` only, no type) isn't resolved
+   against the issuer's own metadata, so it can't be accepted — a real DCP capability this
+   connector doesn't have, not a parsing gap.
+
 ## Protocol coverage
 
 | Item | Detail | Where |

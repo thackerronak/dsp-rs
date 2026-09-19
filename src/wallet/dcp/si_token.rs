@@ -68,8 +68,19 @@ pub(crate) async fn validate_si_token(
     let mut validation = Validation::new(Algorithm::ES256);
     validation.set_audience(&[expected_aud]);
     validation.set_required_spec_claims(&["exp", "aud"]);
+    // An SI token is minted and used within the same request, not carried around, so the
+    // crate's default 60s leeway only weakens `exp`/`nbf` checks here. `nbf` isn't
+    // validated at all unless asked.
+    validation.leeway = 0;
+    validation.validate_nbf = true;
 
     let claims = decode::<SiClaims>(jwt, &decoding_key, &validation)?.claims;
+
+    // Neither this crate nor `required_spec_claims` checks `iat`.
+    anyhow::ensure!(
+        claims.iat <= Utc::now().timestamp(),
+        "SI token `iat` is in the future"
+    );
 
     replay_cache.check_and_insert(&claims.jti, claims.exp)?;
 
